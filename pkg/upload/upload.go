@@ -1,0 +1,362 @@
+package upload
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
+	"context"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+
+	"github.com/google/uuid"
+	"github.com/sirupsen/logrus"
+
+	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/storage"
+)
+
+// UploadService handles file uploads and extraction
+type UploadService struct {
+	config  *config.Config
+	logger  *logrus.Logger
+	storage *storage.MongoDBStorage
+}
+
+// NewUploadService creates a new upload service
+func NewUploadService(cfg *config.Config, logger *logrus.Logger, storage *storage.MongoDBStorage) *UploadService {
+	return &UploadService{
+		config:  cfg,
+		logger:  logger,
+		storage: storage,
+	}
+}
+
+// UploadResult contains the result of an upload operation
+type UploadResult struct {
+	ProjectID      string
+	AccessPassword string
+	ProjectURL     string
+	FileSize       int64
+	ExtractedFiles []string
+}
+
+// UploadProject uploads and processes a compressed project file
+func (s *UploadService) UploadProject(ctx context.Context, projectName, userID string, fileData []byte, fileFormat string) (*UploadResult, error) {
+	// Generate project ID and password
+	projectID := uuid.New().String()
+	accessPassword := generatePassword()
+
+	// Create project directory
+	projectDir := filepath.Join(s.config.Server.Static.ServeDir, projectID)
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create project directory: %w", err)
+	}
+
+	// Extract files based on format
+	extractedFiles, err := s.extractFiles(ctx, fileData, fileFormat, projectDir)
+	if err != nil {
+		// Clean up on error
+		os.RemoveAll(projectDir)
+		return nil, fmt.Errorf("failed to extract files: %w", err)
+	}
+
+	// Create project record
+	project := &storage.Project{
+		ProjectID:      projectID,
+		ProjectName:    projectName,
+		UserID:         userID,
+		AccessPassword: accessPassword,
+		ProjectURL:     fmt.Sprintf("/projects/%s", projectID),
+		Status:         "active",
+		FileSize:       int64(len(fileData)),
+		FileFormat:     fileFormat,
+		Settings:       make(map[string]string),
+	}
+
+	// Save to database
+	if err := s.storage.CreateProject(ctx, project); err != nil {
+		// Clean up on error
+		os.RemoveAll(projectDir)
+		return nil, fmt.Errorf("failed to save project: %w", err)
+	}
+
+	// Create initial metrics
+	metrics := &storage.ProjectMetrics{
+		ProjectID:      projectID,
+		TotalRequests:  0,
+		TotalBandwidth: 0,
+		UniqueVisitors: 0,
+		LastAccessed:   time.Now(),
+		DailyMetrics:   []storage.DailyMetrics{},
+	}
+
+	if err := s.storage.CreateProjectMetrics(ctx, metrics); err != nil {
+		s.logger.WithError(err).Warn("Failed to create initial project metrics")
+	}
+
+	s.logger.WithFields(logrus.Fields{
+		"project_id":      projectID,
+		"project_name":    projectName,
+		"file_size":       len(fileData),
+		"file_format":     fileFormat,
+		"extracted_files": len(extractedFiles),
+	}).Info("Project uploaded successfully")
+
+	return &UploadResult{
+		ProjectID:      projectID,
+		AccessPassword: accessPassword,
+		ProjectURL:     project.ProjectURL,
+		FileSize:       int64(len(fileData)),
+		ExtractedFiles: extractedFiles,
+	}, nil
+}
+
+// extractFiles extracts files from compressed data
+func (s *UploadService) extractFiles(ctx context.Context, fileData []byte, format, destDir string) ([]string, error) {
+	var extractedFiles []string
+
+	switch strings.ToLower(format) {
+	case "tar":
+		files, err := s.extractTar(ctx, fileData, destDir)
+		if err != nil {
+			return nil, err
+		}
+		extractedFiles = files
+	case "gz", "gzip":
+		files, err := s.extractTarGz(ctx, fileData, destDir)
+		if err != nil {
+			return nil, err
+		}
+		extractedFiles = files
+	case "zip":
+		files, err := s.extractZip(ctx, fileData, destDir)
+		if err != nil {
+			return nil, err
+		}
+		extractedFiles = files
+	default:
+		return nil, fmt.Errorf("unsupported file format: %s", format)
+	}
+
+	// Validate extracted files
+	if err := s.validateExtractedFiles(extractedFiles); err != nil {
+		return nil, fmt.Errorf("validation failed: %w", err)
+	}
+
+	return extractedFiles, nil
+}
+
+// extractTar extracts files from a tar archive
+func (s *UploadService) extractTar(ctx context.Context, fileData []byte, destDir string) ([]string, error) {
+	var extractedFiles []string
+
+	reader := strings.NewReader(string(fileData))
+	tarReader := tar.NewReader(reader)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read tar header: %w", err)
+		}
+
+		// Skip directories
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+
+		// Create file path
+		filePath := filepath.Join(destDir, header.Name)
+
+		// Create directory if needed
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		// Create file
+		file, err := os.Create(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file: %w", err)
+		}
+
+		// Copy file content
+		if _, err := io.Copy(file, tarReader); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to copy file content: %w", err)
+		}
+
+		file.Close()
+		extractedFiles = append(extractedFiles, header.Name)
+	}
+
+	return extractedFiles, nil
+}
+
+// extractTarGz extracts files from a gzipped tar archive
+func (s *UploadService) extractTarGz(ctx context.Context, fileData []byte, destDir string) ([]string, error) {
+	reader := strings.NewReader(string(fileData))
+	gzReader, err := gzip.NewReader(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create gzip reader: %w", err)
+	}
+	defer gzReader.Close()
+
+	var extractedFiles []string
+	tarReader := tar.NewReader(gzReader)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		header, err := tarReader.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read tar header: %w", err)
+		}
+
+		// Skip directories
+		if header.Typeflag == tar.TypeDir {
+			continue
+		}
+
+		// Create file path
+		filePath := filepath.Join(destDir, header.Name)
+
+		// Create directory if needed
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		// Create file
+		file, err := os.Create(filePath)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file: %w", err)
+		}
+
+		// Copy file content
+		if _, err := io.Copy(file, tarReader); err != nil {
+			file.Close()
+			return nil, fmt.Errorf("failed to copy file content: %w", err)
+		}
+
+		file.Close()
+		extractedFiles = append(extractedFiles, header.Name)
+	}
+
+	return extractedFiles, nil
+}
+
+// extractZip extracts files from a zip archive
+func (s *UploadService) extractZip(ctx context.Context, fileData []byte, destDir string) ([]string, error) {
+	reader := strings.NewReader(string(fileData))
+	zipReader, err := zip.NewReader(reader, int64(len(fileData)))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create zip reader: %w", err)
+	}
+
+	var extractedFiles []string
+
+	for _, file := range zipReader.File {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+
+		// Skip directories
+		if file.FileInfo().IsDir() {
+			continue
+		}
+
+		// Create file path
+		filePath := filepath.Join(destDir, file.Name)
+
+		// Create directory if needed
+		if err := os.MkdirAll(filepath.Dir(filePath), 0755); err != nil {
+			return nil, fmt.Errorf("failed to create directory: %w", err)
+		}
+
+		// Open file in zip
+		rc, err := file.Open()
+		if err != nil {
+			return nil, fmt.Errorf("failed to open file in zip: %w", err)
+		}
+
+		// Create destination file
+		destFile, err := os.Create(filePath)
+		if err != nil {
+			rc.Close()
+			return nil, fmt.Errorf("failed to create file: %w", err)
+		}
+
+		// Copy file content
+		if _, err := io.Copy(destFile, rc); err != nil {
+			rc.Close()
+			destFile.Close()
+			return nil, fmt.Errorf("failed to copy file content: %w", err)
+		}
+
+		rc.Close()
+		destFile.Close()
+		extractedFiles = append(extractedFiles, file.Name)
+	}
+
+	return extractedFiles, nil
+}
+
+// validateExtractedFiles validates that extracted files are safe and contain expected web files
+func (s *UploadService) validateExtractedFiles(files []string) error {
+	if len(files) == 0 {
+		return fmt.Errorf("no files extracted")
+	}
+
+	// Check for common web files
+	hasIndex := false
+	hasPublic := false
+
+	for _, file := range files {
+		// Check for index.html
+		if file == "index.html" || strings.HasSuffix(file, "/index.html") {
+			hasIndex = true
+		}
+
+		// Check for public directory
+		if strings.HasPrefix(file, "public/") {
+			hasPublic = true
+		}
+
+		// Check for dangerous files
+		if strings.Contains(file, "..") || strings.Contains(file, "~") {
+			return fmt.Errorf("dangerous file path detected: %s", file)
+		}
+	}
+
+	// Warn if no index.html found
+	if !hasIndex {
+		s.logger.Warn("No index.html found in uploaded project")
+	}
+
+	return nil
+}
+
+// generatePassword generates a random access password
+func generatePassword() string {
+	return uuid.New().String()[:8]
+}

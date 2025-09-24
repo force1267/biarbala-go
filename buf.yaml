@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: protos
+    name: github.com/force1267/biarbala-go/protos
+breaking:
+  use:
+    - FILE
+lint:
+  use:
+    - DEFAULT
+  except:
+    - PACKAGE_DIRECTORY_MATCH
+    - PACKAGE_VERSION_SUFFIX

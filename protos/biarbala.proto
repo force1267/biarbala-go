@@ -1,0 +1,156 @@
+syntax = "proto3";
+
+package biarbala.v1;
+
+import "google/protobuf/empty.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/force1267/biarbala-go/protos/gen";
+
+// BiarbalaService provides the main API for the Biarbala platform
+service BiarbalaService {
+  // Upload a compressed file containing static website files
+  rpc UploadProject(UploadProjectRequest) returns (UploadProjectResponse);
+
+  // Get project information
+  rpc GetProject(GetProjectRequest) returns (GetProjectResponse);
+
+  // Update project settings
+  rpc UpdateProject(UpdateProjectRequest) returns (UpdateProjectResponse);
+
+  // Delete a project
+  rpc DeleteProject(DeleteProjectRequest) returns (google.protobuf.Empty);
+
+  // List user's projects
+  rpc ListProjects(ListProjectsRequest) returns (ListProjectsResponse);
+
+  // Get project usage metrics
+  rpc GetProjectMetrics(GetProjectMetricsRequest) returns (GetProjectMetricsResponse);
+
+  // Health check endpoint
+  rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
+}
+
+// UploadProjectRequest contains the file upload data
+message UploadProjectRequest {
+  string project_name = 1;
+  bytes file_data = 2;
+  string file_format = 3; // tar, gz, zip
+  string user_id = 4; // optional, for authenticated users
+}
+
+// UploadProjectResponse contains the project information after upload
+message UploadProjectResponse {
+  string project_id = 1;
+  string access_password = 2;
+  string project_url = 3;
+  google.protobuf.Timestamp created_at = 4;
+  ProjectStatus status = 5;
+}
+
+// GetProjectRequest contains the project identifier
+message GetProjectRequest {
+  string project_id = 1;
+  string access_password = 2; // required for public projects
+}
+
+// GetProjectResponse contains the project information
+message GetProjectResponse {
+  Project project = 1;
+}
+
+// UpdateProjectRequest contains the project update data
+message UpdateProjectRequest {
+  string project_id = 1;
+  string access_password = 2;
+  string project_name = 3;
+  map<string, string> settings = 4;
+}
+
+// UpdateProjectResponse contains the updated project information
+message UpdateProjectResponse {
+  Project project = 1;
+}
+
+// DeleteProjectRequest contains the project identifier for deletion
+message DeleteProjectRequest {
+  string project_id = 1;
+  string access_password = 2;
+}
+
+// ListProjectsRequest contains the user identifier
+message ListProjectsRequest {
+  string user_id = 1;
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+// ListProjectsResponse contains the list of projects
+message ListProjectsResponse {
+  repeated Project projects = 1;
+  int32 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+// GetProjectMetricsRequest contains the project identifier
+message GetProjectMetricsRequest {
+  string project_id = 1;
+  string access_password = 2;
+  google.protobuf.Timestamp start_date = 3;
+  google.protobuf.Timestamp end_date = 4;
+}
+
+// GetProjectMetricsResponse contains the project metrics
+message GetProjectMetricsResponse {
+  ProjectMetrics metrics = 1;
+}
+
+// HealthCheckResponse contains the health status
+message HealthCheckResponse {
+  string status = 1;
+  string version = 2;
+  google.protobuf.Timestamp timestamp = 3;
+}
+
+// Project represents a deployed static website project
+message Project {
+  string project_id = 1;
+  string project_name = 2;
+  string user_id = 3;
+  string project_url = 4;
+  ProjectStatus status = 5;
+  google.protobuf.Timestamp created_at = 6;
+  google.protobuf.Timestamp updated_at = 7;
+  int64 file_size = 8;
+  string file_format = 9;
+  map<string, string> settings = 10;
+}
+
+// ProjectStatus represents the current status of a project
+enum ProjectStatus {
+  PROJECT_STATUS_UNSPECIFIED = 0;
+  PROJECT_STATUS_UPLOADING = 1;
+  PROJECT_STATUS_PROCESSING = 2;
+  PROJECT_STATUS_ACTIVE = 3;
+  PROJECT_STATUS_ERROR = 4;
+  PROJECT_STATUS_DELETED = 5;
+}
+
+// ProjectMetrics contains usage metrics for a project
+message ProjectMetrics {
+  string project_id = 1;
+  int64 total_requests = 2;
+  int64 total_bandwidth_bytes = 3;
+  int64 unique_visitors = 4;
+  google.protobuf.Timestamp last_accessed = 5;
+  repeated DailyMetrics daily_metrics = 6;
+}
+
+// DailyMetrics contains metrics for a specific day
+message DailyMetrics {
+  google.protobuf.Timestamp date = 1;
+  int64 requests = 2;
+  int64 bandwidth_bytes = 3;
+  int64 unique_visitors = 4;
+}

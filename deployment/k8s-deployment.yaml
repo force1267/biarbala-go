@@ -1,0 +1,128 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biarbala
+  labels:
+    app: biarbala
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: biarbala
+  template:
+    metadata:
+      labels:
+        app: biarbala
+    spec:
+      containers:
+      - name: biarbala
+        image: biarbala:latest
+        ports:
+        - containerPort: 8080
+          name: grpc
+        - containerPort: 8081
+          name: http
+        - containerPort: 9090
+          name: metrics
+        env:
+        - name: DATABASE_MONGODB_URI
+          valueFrom:
+            secretKeyRef:
+              name: biarbala-secrets
+              key: mongodb-uri
+        - name: CACHE_REDIS_ADDR
+          valueFrom:
+            configMapKeyRef:
+              name: biarbala-config
+              key: redis-addr
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8081
+          initialDelaySeconds: 5
+          periodSeconds: 5
+        volumeMounts:
+        - name: uploads
+          mountPath: /app/uploads
+        - name: served
+          mountPath: /app/served
+        - name: temp
+          mountPath: /app/temp
+      volumes:
+      - name: uploads
+        persistentVolumeClaim:
+          claimName: biarbala-uploads-pvc
+      - name: served
+        persistentVolumeClaim:
+          claimName: biarbala-served-pvc
+      - name: temp
+        emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biarbala-service
+spec:
+  selector:
+    app: biarbala
+  ports:
+  - name: grpc
+    port: 8080
+    targetPort: 8080
+  - name: http
+    port: 8081
+    targetPort: 8081
+  - name: metrics
+    port: 9090
+    targetPort: 9090
+  type: ClusterIP
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: biarbala-config
+data:
+  redis-addr: "redis-service:6379"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: biarbala-secrets
+type: Opaque
+data:
+  mongodb-uri: bW9uZ29kYjovL21vbmdvZGI6MjcwMTc= # base64 encoded mongodb://mongodb:27017
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biarbala-uploads-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biarbala-served-pvc
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi

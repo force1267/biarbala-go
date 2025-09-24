@@ -1,0 +1,46 @@
+server:
+  grpc:
+    port: 8080
+    host: "0.0.0.0"
+    enable_reflection: true
+    enable_web_grpc: true
+  http:
+    port: 8081
+    host: "0.0.0.0"
+  static:
+    upload_dir: "./uploads"
+    serve_dir: "./served"
+
+database:
+  mongodb:
+    uri: "mongodb://localhost:27017"
+    database: "biarbala"
+    timeout: 30s
+
+cache:
+  redis:
+    addr: "localhost:6379"
+    password: ""
+    db: 0
+    timeout: 30s
+
+logging:
+  level: "info"
+  format: "json"
+  output: "stdout"
+
+metrics:
+  prometheus:
+    enabled: true
+    port: 9090
+    path: "/metrics"
+
+upload:
+  max_file_size: 100MB
+  allowed_formats: ["tar", "gz", "zip"]
+  temp_dir: "./temp"
+
+security:
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60

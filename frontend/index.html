@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Biarbala - Simple Static Hosting</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 3rem;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .header p {
+            font-size: 1.2rem;
+            opacity: 0.9;
+        }
+
+        .main-content {
+            background: white;
+            border-radius: 15px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            margin-bottom: 30px;
+        }
+
+        .upload-section {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .upload-section h2 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 2rem;
+        }
+
+        .upload-section p {
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1rem;
+        }
+
+        .upload-form {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+            text-align: left;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            font-weight: 600;
+            color: #333;
+        }
+
+        .form-group input,
+        .form-group select {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #e1e5e9;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s ease;
+        }
+
+        .form-group input:focus,
+        .form-group select:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .file-input {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-button {
+            display: block;
+            width: 100%;
+            padding: 20px;
+            border: 2px dashed #667eea;
+            border-radius: 8px;
+            background: #f8f9ff;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-input-button:hover {
+            background: #e8edff;
+            border-color: #5a67d8;
+        }
+
+        .file-input-button.dragover {
+            background: #e8edff;
+            border-color: #5a67d8;
+        }
+
+        .upload-btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 40px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+            width: 100%;
+        }
+
+        .upload-btn:hover {
+            transform: translateY(-2px);
+        }
+
+        .upload-btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        .feature {
+            text-align: center;
+            padding: 30px;
+            background: #f8f9ff;
+            border-radius: 10px;
+            border: 1px solid #e1e5e9;
+        }
+
+        .feature h3 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 1.3rem;
+        }
+
+        .feature p {
+            color: #666;
+            line-height: 1.6;
+        }
+
+        .result {
+            margin-top: 30px;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+        }
+
+        .result.success {
+            background: #d4edda;
+            border: 1px solid #c3e6cb;
+            color: #155724;
+        }
+
+        .result.error {
+            background: #f8d7da;
+            border: 1px solid #f5c6cb;
+            color: #721c24;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .footer {
+            text-align: center;
+            color: white;
+            margin-top: 40px;
+            opacity: 0.8;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Biarbala</h1>
+            <p>Simple static hosting for your projects</p>
+        </div>
+
+        <div class="main-content">
+            <div class="upload-section">
+                <h2>Upload Your Project</h2>
+                <p>Upload a compressed file (tar, gzip, or zip) containing your static website files</p>
+                
+                <form class="upload-form" hx-post="/api/v1/biarbala.BiarbalaService/UploadProject" 
+                      hx-encoding="multipart/form-data" 
+                      hx-target="#result" 
+                      hx-indicator="#loading">
+                    
+                    <div class="form-group">
+                        <label for="project_name">Project Name</label>
+                        <input type="text" id="project_name" name="project_name" required 
+                               placeholder="Enter your project name">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="file_format">File Format</label>
+                        <select id="file_format" name="file_format" required>
+                            <option value="">Select format</option>
+                            <option value="tar">TAR</option>
+                            <option value="gz">GZIP</option>
+                            <option value="zip">ZIP</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="file_data">Project Files</label>
+                        <div class="file-input-wrapper">
+                            <input type="file" id="file_data" name="file_data" class="file-input" 
+                                   accept=".tar,.gz,.zip" required>
+                            <div class="file-input-button" onclick="document.getElementById('file_data').click()">
+                                <div>📁 Click to select file or drag and drop</div>
+                                <div style="font-size: 0.9rem; margin-top: 5px; color: #666;">
+                                    Supported formats: TAR, GZIP, ZIP
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <button type="submit" class="upload-btn">Upload Project</button>
+                </form>
+
+                <div id="loading" class="loading">
+                    <div class="spinner"></div>
+                    <div>Uploading your project...</div>
+                </div>
+
+                <div id="result" class="result"></div>
+            </div>
+
+            <div class="features">
+                <div class="feature">
+                    <h3>🚀 Simple Upload</h3>
+                    <p>Just upload your compressed static files and get a live URL instantly. No complex setup required.</p>
+                </div>
+                
+                <div class="feature">
+                    <h3>📊 Usage Metrics</h3>
+                    <p>Track your website's performance with detailed analytics and usage statistics.</p>
+                </div>
+                
+                <div class="feature">
+                    <h3>🔒 Secure Access</h3>
+                    <p>Each project gets a unique access password for secure management and updates.</p>
+                </div>
+                
+                <div class="feature">
+                    <h3>⚡ Fast Serving</h3>
+                    <p>Your static files are served with optimized caching and CDN-like performance.</p>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            <p>&copy; 2024 Biarbala. Simple static hosting made easy.</p>
+        </div>
+    </div>
+
+    <script>
+        // File input handling
+        const fileInput = document.getElementById('file_data');
+        const fileButton = document.querySelector('.file-input-button');
+        const formatSelect = document.getElementById('file_format');
+
+        fileInput.addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            if (file) {
+                const fileName = file.name.toLowerCase();
+                fileButton.innerHTML = `📁 ${file.name}<br><small>Size: ${formatFileSize(file.size)}</small>`;
+                
+                // Auto-detect format
+                if (fileName.endsWith('.tar')) {
+                    formatSelect.value = 'tar';
+                } else if (fileName.endsWith('.gz') || fileName.endsWith('.gzip')) {
+                    formatSelect.value = 'gz';
+                } else if (fileName.endsWith('.zip')) {
+                    formatSelect.value = 'zip';
+                }
+            }
+        });
+
+        // Drag and drop handling
+        fileButton.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            fileButton.classList.add('dragover');
+        });
+
+        fileButton.addEventListener('dragleave', function(e) {
+            e.preventDefault();
+            fileButton.classList.remove('dragover');
+        });
+
+        fileButton.addEventListener('drop', function(e) {
+            e.preventDefault();
+            fileButton.classList.remove('dragover');
+            
+            const files = e.dataTransfer.files;
+            if (files.length > 0) {
+                fileInput.files = files;
+                fileInput.dispatchEvent(new Event('change'));
+            }
+        });
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (bytes === 0) return '0 Bytes';
+            const k = 1024;
+            const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+            const i = Math.floor(Math.log(bytes) / Math.log(k));
+            return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+        }
+
+        // HTMX response handling
+        document.body.addEventListener('htmx:afterRequest', function(event) {
+            const result = document.getElementById('result');
+            const loading = document.getElementById('loading');
+            
+            loading.style.display = 'none';
+            
+            if (event.detail.xhr.status === 200) {
+                try {
+                    const response = JSON.parse(event.detail.xhr.responseText);
+                    result.innerHTML = `
+                        <h3>🎉 Project Uploaded Successfully!</h3>
+                        <p><strong>Project ID:</strong> ${response.projectId}</p>
+                        <p><strong>Access Password:</strong> ${response.accessPassword}</p>
+                        <p><strong>Project URL:</strong> <a href="${response.projectUrl}" target="_blank">${response.projectUrl}</a></p>
+                        <p><strong>Status:</strong> ${response.status}</p>
+                        <p style="margin-top: 15px; font-size: 0.9rem; color: #666;">
+                            Save your Project ID and Access Password - you'll need them to manage your project!
+                        </p>
+                    `;
+                    result.className = 'result success';
+                    result.style.display = 'block';
+                } catch (e) {
+                    result.innerHTML = '<p>Upload successful but response parsing failed.</p>';
+                    result.className = 'result success';
+                    result.style.display = 'block';
+                }
+            } else {
+                result.innerHTML = '<p>Upload failed. Please try again.</p>';
+                result.className = 'result error';
+                result.style.display = 'block';
+            }
+        });
+
+        document.body.addEventListener('htmx:beforeRequest', function(event) {
+            const loading = document.getElementById('loading');
+            loading.style.display = 'block';
+        });
+    </script>
+</body>
+</html>
