@@ -14,6 +14,20 @@ Biarbala is a web server as a service platform similar to Netlify, Surge, and Ve
 - **Usage Monitoring**: Monitor usage and provide metrics to users
 - **Billing Preparation**: Codebase must be extensible for future billing implementation with exact usage monitoring
 
+### Domain Management Requirements
+- **Main Domain**: `biarbala.ir` as the primary domain
+- **Subdomain Validation**: 
+  - Must have at least one dash "-" not at beginning or end: `hello-world` allowed, `hello` not allowed
+  - No consecutive dashes: `hello--world` not allowed
+  - Minimum 6 characters: `abc.biarbala.ir` not allowed
+  - Only digits, alphabet, and dash allowed
+- **Default Subdomains**: Generate meaningful names with dashes like `pretty-good-site.biarbala.ir`
+- **Subdomain Changes**: Users can change their subdomains
+- **Custom Domains**: Users can use their own domains
+- **Domain Ownership Verification**: TXT domain challenge for custom domain ownership
+- **SSL Certificates**: Automatic SSL certificate issuance using Let's Encrypt
+- **Domain Traffic Routing**: Serve projects based on domain/subdomain
+
 ### Technical Requirements
 - **Frontend**: Minimal frontend using HTMX, HTML, JS (no frameworks like React/Vue/Svelte)
 - **Database**: MongoDB without ORMs - craft pipelines and queries in code
@@ -55,6 +69,13 @@ Biarbala is a web server as a service platform similar to Netlify, Surge, and Ve
 - [x] User account system (optional accounts, project-based access) - Implemented with project-based access
 - [x] Usage monitoring and metrics collection - Implemented in pkg/metrics/ and pkg/storage/
 - [x] Frontend implementation (HTMX, HTML, JS) - Implemented in frontend/
+
+### Phase 4: Domain Management ✅
+- [x] Subdomain validation and generation - Implemented in pkg/domain/
+- [x] Custom domain support with TXT verification - Implemented in pkg/domain/verification.go
+- [x] SSL certificate management with Let's Encrypt - Implemented in pkg/ssl/
+- [x] Domain routing and traffic management - Implemented in pkg/web/
+- [x] Domain change functionality - Implemented in pkg/server/biarbala_service.go
 
 ### Phase 4: Production Readiness
 - [ ] Testing implementation
@@ -144,6 +165,26 @@ biarbala/
 - Real-time upload progress
 - Responsive design
 - Auto-format detection
+
+#### 9. Domain Management (`pkg/domain/`)
+- Subdomain validation with Biarbala rules
+- Custom domain validation
+- Meaningful subdomain generation
+- Domain verification with TXT challenges
+- DNS lookup and verification
+
+#### 10. SSL Certificate Management (`pkg/ssl/`)
+- Let's Encrypt provider implementation
+- Certificate request, renewal, and revocation
+- Self-signed certificates for development
+- Certificate validation and expiry checking
+- TLS configuration management
+
+#### 11. Domain Routing (`pkg/web/web.go`)
+- Domain-based project serving
+- Custom domain verification checks
+- SSL certificate validation
+- Domain-specific error handling
 
 ### Infrastructure Components
 

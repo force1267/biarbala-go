@@ -12,7 +12,9 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/domain"
 	"github.com/force1267/biarbala-go/pkg/metrics"
+	"github.com/force1267/biarbala-go/pkg/ssl"
 	"github.com/force1267/biarbala-go/pkg/storage"
 	"github.com/force1267/biarbala-go/pkg/upload"
 	"github.com/force1267/biarbala-go/protos/gen"
@@ -21,21 +23,35 @@ import (
 // BiarbalaServiceImpl implements the BiarbalaService gRPC interface
 type BiarbalaServiceImpl struct {
 	gen.UnimplementedBiarbalaServiceServer
-	config        *config.Config
-	logger        *logrus.Logger
-	storage       *storage.MongoDBStorage
-	uploadService *upload.UploadService
-	metrics       *metrics.Metrics
+	config           *config.Config
+	logger           *logrus.Logger
+	storage          *storage.MongoDBStorage
+	uploadService    *upload.UploadService
+	metrics          *metrics.Metrics
+	domainValidator  *domain.SubdomainValidator
+	domainVerifier   *domain.DomainVerifier
+	certificateManager *ssl.CertificateManager
 }
 
 // NewBiarbalaService creates a new BiarbalaService implementation
 func NewBiarbalaService(cfg *config.Config, logger *logrus.Logger, storage *storage.MongoDBStorage, uploadService *upload.UploadService, m *metrics.Metrics) *BiarbalaServiceImpl {
+	// Initialize domain services
+	domainValidator := domain.NewSubdomainValidator()
+	domainVerifier := domain.NewDomainVerifier(logger)
+	
+	// Initialize SSL certificate manager with Let's Encrypt provider
+	letsEncryptProvider := ssl.NewLetsEncryptProvider(logger)
+	certificateManager := ssl.NewCertificateManager(logger, letsEncryptProvider)
+	
 	return &BiarbalaServiceImpl{
-		config:        cfg,
-		logger:        logger,
-		storage:       storage,
-		uploadService: uploadService,
-		metrics:       m,
+		config:            cfg,
+		logger:            logger,
+		storage:           storage,
+		uploadService:     uploadService,
+		metrics:           m,
+		domainValidator:   domainValidator,
+		domainVerifier:    domainVerifier,
+		certificateManager: certificateManager,
 	}
 }
 
@@ -285,6 +301,254 @@ func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *gen.Ge
 
 	response := &gen.GetProjectMetricsResponse{
 		Metrics: pbMetrics,
+	}
+
+	return response, nil
+}
+
+// SetProjectDomain sets the domain for a project
+func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *gen.SetProjectDomainRequest) (*gen.SetProjectDomainResponse, error) {
+	s.logger.WithFields(logrus.Fields{
+		"project_id": req.ProjectId,
+		"domain": req.Domain,
+		"is_custom_domain": req.IsCustomDomain,
+	}).Info("Set project domain request received")
+
+	// Validate request
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project ID is required")
+	}
+	if req.Domain == "" {
+		return nil, status.Error(codes.InvalidArgument, "domain is required")
+	}
+
+	// Get project from storage
+	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	if err != nil {
+		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
+		return nil, status.Error(codes.NotFound, "project not found")
+	}
+
+	// Check access password
+	if req.AccessPassword != project.AccessPassword {
+		return nil, status.Error(codes.PermissionDenied, "invalid access password")
+	}
+
+	// Validate domain
+	if req.IsCustomDomain {
+		if err := s.domainValidator.ValidateCustomDomain(req.Domain); err != nil {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid custom domain: %s", err.Error()))
+		}
+	} else {
+		// Validate subdomain
+		subdomain := s.domainValidator.ExtractSubdomainFromDomain(req.Domain)
+		if subdomain == "" {
+			return nil, status.Error(codes.InvalidArgument, "invalid subdomain format")
+		}
+		if err := s.domainValidator.ValidateSubdomain(subdomain); err != nil {
+			return nil, status.Error(codes.InvalidArgument, fmt.Sprintf("invalid subdomain: %s", err.Error()))
+		}
+	}
+
+	// Check if domain is already in use
+	existingProject, err := s.storage.GetProjectByDomain(ctx, req.Domain)
+	if err == nil && existingProject.ProjectID != req.ProjectId {
+		return nil, status.Error(codes.AlreadyExists, "domain is already in use by another project")
+	}
+
+	// Set domain in database
+	if err := s.storage.SetProjectDomain(ctx, req.ProjectId, req.Domain, req.IsCustomDomain); err != nil {
+		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to set project domain")
+		return nil, status.Error(codes.Internal, "failed to set project domain")
+	}
+
+	response := &gen.SetProjectDomainResponse{
+		Domain: req.Domain,
+		RequiresVerification: req.IsCustomDomain,
+	}
+
+	// If it's a custom domain, create verification challenge
+	if req.IsCustomDomain {
+		challenge, err := s.domainVerifier.CreateChallenge(req.Domain)
+		if err != nil {
+			s.logger.WithError(err).Error("Failed to create domain verification challenge")
+			return nil, status.Error(codes.Internal, "failed to create verification challenge")
+		}
+
+		// Store verification challenge
+		verification := &storage.DomainVerification{
+			ProjectID: req.ProjectId,
+			Domain:    req.Domain,
+			TXTRecord: challenge.TXTRecord,
+			Verified:  false,
+			CreatedAt: challenge.CreatedAt,
+			ExpiresAt: challenge.ExpiresAt,
+		}
+
+		if err := s.storage.CreateDomainVerification(ctx, verification); err != nil {
+			s.logger.WithError(err).Error("Failed to store domain verification challenge")
+			return nil, status.Error(codes.Internal, "failed to store verification challenge")
+		}
+
+		response.VerificationInstructions = s.domainVerifier.GetVerificationInstructions(challenge)
+		response.TxtRecord = challenge.TXTRecord
+	}
+
+	s.logger.WithField("project_id", req.ProjectId).Info("Project domain set successfully")
+	return response, nil
+}
+
+// VerifyDomain verifies domain ownership
+func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *gen.VerifyDomainRequest) (*gen.VerifyDomainResponse, error) {
+	s.logger.WithFields(logrus.Fields{
+		"project_id": req.ProjectId,
+		"domain": req.Domain,
+	}).Info("Verify domain request received")
+
+	// Validate request
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project ID is required")
+	}
+	if req.Domain == "" {
+		return nil, status.Error(codes.InvalidArgument, "domain is required")
+	}
+
+	// Get project from storage
+	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	if err != nil {
+		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
+		return nil, status.Error(codes.NotFound, "project not found")
+	}
+
+	// Check access password
+	if req.AccessPassword != project.AccessPassword {
+		return nil, status.Error(codes.PermissionDenied, "invalid access password")
+	}
+
+	// Get verification challenge
+	verification, err := s.storage.GetDomainVerification(ctx, req.ProjectId, req.Domain)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get domain verification challenge")
+		return nil, status.Error(codes.NotFound, "verification challenge not found")
+	}
+
+	// Create challenge object for verification
+	challenge := &domain.VerificationChallenge{
+		Domain:    verification.Domain,
+		TXTRecord: verification.TXTRecord,
+		CreatedAt: verification.CreatedAt,
+		ExpiresAt: verification.ExpiresAt,
+		Verified:  verification.Verified,
+	}
+
+	// Verify domain
+	verified, err := s.domainVerifier.VerifyChallenge(ctx, challenge)
+	if err != nil {
+		s.logger.WithError(err).Error("Domain verification failed")
+		return &gen.VerifyDomainResponse{
+			Verified: false,
+			Message:  fmt.Sprintf("Verification failed: %s", err.Error()),
+		}, nil
+	}
+
+	if verified {
+		// Update verification status
+		now := time.Now()
+		updates := map[string]interface{}{
+			"verified":     true,
+			"verified_at":  now,
+		}
+		
+		if err := s.storage.UpdateDomainVerification(ctx, req.ProjectId, req.Domain, updates); err != nil {
+			s.logger.WithError(err).Error("Failed to update domain verification status")
+			return nil, status.Error(codes.Internal, "failed to update verification status")
+		}
+
+		// Mark project domain as verified
+		if err := s.storage.VerifyProjectDomain(ctx, req.ProjectId); err != nil {
+			s.logger.WithError(err).Error("Failed to verify project domain")
+			return nil, status.Error(codes.Internal, "failed to verify project domain")
+		}
+
+		// Request SSL certificate
+		if _, err := s.certificateManager.RequestCertificate(ctx, req.Domain); err != nil {
+			s.logger.WithError(err).Warn("Failed to request SSL certificate")
+			// Don't fail the verification if SSL certificate request fails
+		}
+
+		s.logger.WithField("domain", req.Domain).Info("Domain verification successful")
+		return &gen.VerifyDomainResponse{
+			Verified:   true,
+			Message:    "Domain verification successful",
+			VerifiedAt: timestamppb.New(now),
+		}, nil
+	}
+
+	return &gen.VerifyDomainResponse{
+		Verified: false,
+		Message:  "Domain verification failed - TXT record not found or does not match",
+	}, nil
+}
+
+// GetDomainVerificationStatus gets the verification status of a domain
+func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, req *gen.GetDomainVerificationStatusRequest) (*gen.GetDomainVerificationStatusResponse, error) {
+	s.logger.WithFields(logrus.Fields{
+		"project_id": req.ProjectId,
+		"domain": req.Domain,
+	}).Info("Get domain verification status request received")
+
+	// Validate request
+	if req.ProjectId == "" {
+		return nil, status.Error(codes.InvalidArgument, "project ID is required")
+	}
+	if req.Domain == "" {
+		return nil, status.Error(codes.InvalidArgument, "domain is required")
+	}
+
+	// Get project from storage
+	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	if err != nil {
+		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
+		return nil, status.Error(codes.NotFound, "project not found")
+	}
+
+	// Check access password
+	if req.AccessPassword != project.AccessPassword {
+		return nil, status.Error(codes.PermissionDenied, "invalid access password")
+	}
+
+	// Get verification challenge
+	verification, err := s.storage.GetDomainVerification(ctx, req.ProjectId, req.Domain)
+	if err != nil {
+		s.logger.WithError(err).Error("Failed to get domain verification challenge")
+		return nil, status.Error(codes.NotFound, "verification challenge not found")
+	}
+
+	status := "pending"
+	if verification.Verified {
+		status = "verified"
+	} else if time.Now().After(verification.ExpiresAt) {
+		status = "expired"
+	}
+
+	response := &gen.GetDomainVerificationStatusResponse{
+		Domain:     req.Domain,
+		Verified:   verification.Verified,
+		Status:     status,
+		TxtRecord:  verification.TXTRecord,
+		ExpiresAt:  timestamppb.New(verification.ExpiresAt),
+	}
+
+	// Add verification instructions if not verified
+	if !verification.Verified {
+		challenge := &domain.VerificationChallenge{
+			Domain:    verification.Domain,
+			TXTRecord: verification.TXTRecord,
+			CreatedAt: verification.CreatedAt,
+			ExpiresAt: verification.ExpiresAt,
+			Verified:  verification.Verified,
+		}
+		response.VerificationInstructions = s.domainVerifier.GetVerificationInstructions(challenge)
 	}
 
 	return response, nil

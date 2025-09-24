@@ -44,3 +44,12 @@ security:
   rate_limit:
     enabled: true
     requests_per_minute: 60
+
+domain:
+  main_domain: "biarbala.ir"
+  subdomain_min_length: 6
+  verification_timeout: "24h"
+  ssl:
+    provider: "letsencrypt"
+    auto_renew: true
+    renew_threshold: "30d"

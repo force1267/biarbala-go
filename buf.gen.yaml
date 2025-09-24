@@ -1,8 +1,6 @@
 version: v2
 managed:
   enabled: true
-  go_package_prefix:
-    default: github.com/force1267/biarbala-go/protos/gen
 plugins:
   - plugin: buf.build/protocolbuffers/go
     out: protos/gen

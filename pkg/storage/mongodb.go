@@ -27,6 +27,9 @@ type Project struct {
 	FileSize       int64              `bson:"file_size"`
 	FileFormat     string             `bson:"file_format"`
 	Settings       map[string]string  `bson:"settings,omitempty"`
+	Domain         string             `bson:"domain,omitempty"`
+	IsCustomDomain bool               `bson:"is_custom_domain"`
+	DomainVerified bool               `bson:"domain_verified"`
 }
 
 // ProjectMetrics represents project metrics in the database
@@ -47,6 +50,18 @@ type DailyMetrics struct {
 	Requests       int64     `bson:"requests"`
 	BandwidthBytes int64     `bson:"bandwidth_bytes"`
 	UniqueVisitors int64     `bson:"unique_visitors"`
+}
+
+// DomainVerification represents a domain verification challenge
+type DomainVerification struct {
+	ID                primitive.ObjectID `bson:"_id,omitempty"`
+	ProjectID         string             `bson:"project_id"`
+	Domain            string             `bson:"domain"`
+	TXTRecord         string             `bson:"txt_record"`
+	Verified          bool               `bson:"verified"`
+	CreatedAt         time.Time          `bson:"created_at"`
+	ExpiresAt         time.Time          `bson:"expires_at"`
+	VerifiedAt        *time.Time         `bson:"verified_at,omitempty"`
 }
 
 // MongoDBStorage implements storage interface using MongoDB
@@ -261,6 +276,92 @@ func (s *MongoDBStorage) RecordAccess(ctx context.Context, projectID string, ban
 	}
 
 	return nil
+}
+
+// CreateDomainVerification creates a new domain verification challenge
+func (s *MongoDBStorage) CreateDomainVerification(ctx context.Context, verification *DomainVerification) error {
+	collection := s.database.Collection("domain_verifications")
+	
+	_, err := collection.InsertOne(ctx, verification)
+	if err != nil {
+		return fmt.Errorf("failed to create domain verification: %w", err)
+	}
+	
+	return nil
+}
+
+// GetDomainVerification retrieves a domain verification challenge
+func (s *MongoDBStorage) GetDomainVerification(ctx context.Context, projectID, domain string) (*DomainVerification, error) {
+	collection := s.database.Collection("domain_verifications")
+	
+	var verification DomainVerification
+	err := collection.FindOne(ctx, bson.M{
+		"project_id": projectID,
+		"domain": domain,
+	}).Decode(&verification)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("domain verification not found")
+		}
+		return nil, fmt.Errorf("failed to get domain verification: %w", err)
+	}
+	
+	return &verification, nil
+}
+
+// UpdateDomainVerification updates a domain verification challenge
+func (s *MongoDBStorage) UpdateDomainVerification(ctx context.Context, projectID, domain string, updates map[string]interface{}) error {
+	collection := s.database.Collection("domain_verifications")
+	
+	_, err := collection.UpdateOne(
+		ctx,
+		bson.M{
+			"project_id": projectID,
+			"domain": domain,
+		},
+		bson.M{"$set": updates},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update domain verification: %w", err)
+	}
+	
+	return nil
+}
+
+// SetProjectDomain sets the domain for a project
+func (s *MongoDBStorage) SetProjectDomain(ctx context.Context, projectID, domain string, isCustomDomain bool) error {
+	updates := map[string]interface{}{
+		"domain": domain,
+		"is_custom_domain": isCustomDomain,
+		"domain_verified": false, // Reset verification status when domain changes
+	}
+	
+	return s.UpdateProject(ctx, projectID, updates)
+}
+
+// VerifyProjectDomain marks a project's domain as verified
+func (s *MongoDBStorage) VerifyProjectDomain(ctx context.Context, projectID string) error {
+	updates := map[string]interface{}{
+		"domain_verified": true,
+	}
+	
+	return s.UpdateProject(ctx, projectID, updates)
+}
+
+// GetProjectByDomain retrieves a project by its domain
+func (s *MongoDBStorage) GetProjectByDomain(ctx context.Context, domain string) (*Project, error) {
+	collection := s.database.Collection("projects")
+	
+	var project Project
+	err := collection.FindOne(ctx, bson.M{"domain": domain}).Decode(&project)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, fmt.Errorf("project not found for domain: %s", domain)
+		}
+		return nil, fmt.Errorf("failed to get project by domain: %w", err)
+	}
+	
+	return &project, nil
 }
 
 // Close closes the MongoDB connection

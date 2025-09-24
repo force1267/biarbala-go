@@ -5,7 +5,7 @@ package biarbala.v1;
 import "google/protobuf/empty.proto";
 import "google/protobuf/timestamp.proto";
 
-option go_package = "github.com/force1267/biarbala-go/protos/gen";
+option go_package = "github.com/force1267/biarbala-go/protos/gen/protos";
 
 // BiarbalaService provides the main API for the Biarbala platform
 service BiarbalaService {
@@ -26,6 +26,11 @@ service BiarbalaService {
 
   // Get project usage metrics
   rpc GetProjectMetrics(GetProjectMetricsRequest) returns (GetProjectMetricsResponse);
+
+  // Domain management
+  rpc SetProjectDomain(SetProjectDomainRequest) returns (SetProjectDomainResponse);
+  rpc VerifyDomain(VerifyDomainRequest) returns (VerifyDomainResponse);
+  rpc GetDomainVerificationStatus(GetDomainVerificationStatusRequest) returns (GetDomainVerificationStatusResponse);
 
   // Health check endpoint
   rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
@@ -153,4 +158,46 @@ message DailyMetrics {
   int64 requests = 2;
   int64 bandwidth_bytes = 3;
   int64 unique_visitors = 4;
+}
+
+// Domain management messages
+message SetProjectDomainRequest {
+  string project_id = 1;
+  string access_password = 2;
+  string domain = 3;
+  bool is_custom_domain = 4;
+}
+
+message SetProjectDomainResponse {
+  string domain = 1;
+  bool requires_verification = 2;
+  string verification_instructions = 3;
+  string txt_record = 4;
+}
+
+message VerifyDomainRequest {
+  string project_id = 1;
+  string access_password = 2;
+  string domain = 3;
+}
+
+message VerifyDomainResponse {
+  bool verified = 1;
+  string message = 2;
+  google.protobuf.Timestamp verified_at = 3;
+}
+
+message GetDomainVerificationStatusRequest {
+  string project_id = 1;
+  string access_password = 2;
+  string domain = 3;
+}
+
+message GetDomainVerificationStatusResponse {
+  string domain = 1;
+  bool verified = 2;
+  string status = 3;
+  string txt_record = 4;
+  google.protobuf.Timestamp expires_at = 5;
+  string verification_instructions = 6;
 }

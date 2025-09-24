@@ -16,22 +16,25 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/domain"
 	"github.com/force1267/biarbala-go/pkg/storage"
 )
 
 // UploadService handles file uploads and extraction
 type UploadService struct {
-	config  *config.Config
-	logger  *logrus.Logger
-	storage *storage.MongoDBStorage
+	config    *config.Config
+	logger    *logrus.Logger
+	storage   *storage.MongoDBStorage
+	validator *domain.SubdomainValidator
 }
 
 // NewUploadService creates a new upload service
 func NewUploadService(cfg *config.Config, logger *logrus.Logger, storage *storage.MongoDBStorage) *UploadService {
 	return &UploadService{
-		config:  cfg,
-		logger:  logger,
-		storage: storage,
+		config:    cfg,
+		logger:    logger,
+		storage:   storage,
+		validator: domain.NewSubdomainValidator(),
 	}
 }
 
@@ -40,6 +43,7 @@ type UploadResult struct {
 	ProjectID      string
 	AccessPassword string
 	ProjectURL     string
+	Domain         string
 	FileSize       int64
 	ExtractedFiles []string
 }
@@ -49,7 +53,11 @@ func (s *UploadService) UploadProject(ctx context.Context, projectName, userID s
 	// Generate project ID and password
 	projectID := uuid.New().String()
 	accessPassword := generatePassword()
-
+	
+	// Generate default subdomain
+	defaultSubdomain := s.generateUniqueSubdomain()
+	defaultDomain := defaultSubdomain + "." + domain.MainDomain
+	
 	// Create project directory
 	projectDir := filepath.Join(s.config.Server.Static.ServeDir, projectID)
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -71,6 +79,9 @@ func (s *UploadService) UploadProject(ctx context.Context, projectName, userID s
 		UserID:         userID,
 		AccessPassword: accessPassword,
 		ProjectURL:     fmt.Sprintf("/projects/%s", projectID),
+		Domain:         defaultDomain,
+		IsCustomDomain: false,
+		DomainVerified: true, // Default subdomains are automatically verified
 		Status:         "active",
 		FileSize:       int64(len(fileData)),
 		FileFormat:     fileFormat,
@@ -110,6 +121,7 @@ func (s *UploadService) UploadProject(ctx context.Context, projectName, userID s
 		ProjectID:      projectID,
 		AccessPassword: accessPassword,
 		ProjectURL:     project.ProjectURL,
+		Domain:         defaultDomain,
 		FileSize:       int64(len(fileData)),
 		ExtractedFiles: extractedFiles,
 	}, nil
@@ -359,4 +371,24 @@ func (s *UploadService) validateExtractedFiles(files []string) error {
 // generatePassword generates a random access password
 func generatePassword() string {
 	return uuid.New().String()[:8]
+}
+
+// generateUniqueSubdomain generates a unique subdomain that doesn't exist in the database
+func (s *UploadService) generateUniqueSubdomain() string {
+	maxAttempts := 10
+	
+	for i := 0; i < maxAttempts; i++ {
+		subdomain := s.validator.GenerateSubdomain()
+		fullDomain := subdomain + "." + domain.MainDomain
+		
+		// Check if domain already exists
+		_, err := s.storage.GetProjectByDomain(context.Background(), fullDomain)
+		if err != nil {
+			// Domain doesn't exist, we can use it
+			return subdomain
+		}
+	}
+	
+	// Fallback to UUID-based subdomain if we can't generate a meaningful one
+	return "project-" + uuid.New().String()[:8]
 }
