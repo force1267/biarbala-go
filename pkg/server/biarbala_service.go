@@ -17,19 +17,19 @@ import (
 	"github.com/force1267/biarbala-go/pkg/ssl"
 	"github.com/force1267/biarbala-go/pkg/storage"
 	"github.com/force1267/biarbala-go/pkg/upload"
-	"github.com/force1267/biarbala-go/protos/gen"
+	protos "github.com/force1267/biarbala-go/protos/gen"
 )
 
 // BiarbalaServiceImpl implements the BiarbalaService gRPC interface
 type BiarbalaServiceImpl struct {
-	gen.UnimplementedBiarbalaServiceServer
-	config           *config.Config
-	logger           *logrus.Logger
-	storage          *storage.MongoDBStorage
-	uploadService    *upload.UploadService
-	metrics          *metrics.Metrics
-	domainValidator  *domain.SubdomainValidator
-	domainVerifier   *domain.DomainVerifier
+	protos.UnimplementedBiarbalaServiceServer
+	config             *config.Config
+	logger             *logrus.Logger
+	storage            *storage.MongoDBStorage
+	uploadService      *upload.UploadService
+	metrics            *metrics.Metrics
+	domainValidator    *domain.SubdomainValidator
+	domainVerifier     *domain.DomainVerifier
 	certificateManager *ssl.CertificateManager
 }
 
@@ -38,25 +38,25 @@ func NewBiarbalaService(cfg *config.Config, logger *logrus.Logger, storage *stor
 	// Initialize domain services
 	domainValidator := domain.NewSubdomainValidator()
 	domainVerifier := domain.NewDomainVerifier(logger)
-	
+
 	// Initialize SSL certificate manager with Let's Encrypt provider
 	letsEncryptProvider := ssl.NewLetsEncryptProvider(logger)
 	certificateManager := ssl.NewCertificateManager(logger, letsEncryptProvider)
-	
+
 	return &BiarbalaServiceImpl{
-		config:            cfg,
-		logger:            logger,
-		storage:           storage,
-		uploadService:     uploadService,
-		metrics:           m,
-		domainValidator:   domainValidator,
-		domainVerifier:    domainVerifier,
+		config:             cfg,
+		logger:             logger,
+		storage:            storage,
+		uploadService:      uploadService,
+		metrics:            m,
+		domainValidator:    domainValidator,
+		domainVerifier:     domainVerifier,
 		certificateManager: certificateManager,
 	}
 }
 
 // UploadProject uploads a compressed file containing static website files
-func (s *BiarbalaServiceImpl) UploadProject(ctx context.Context, req *gen.UploadProjectRequest) (*gen.UploadProjectResponse, error) {
+func (s *BiarbalaServiceImpl) UploadProject(ctx context.Context, req *protos.UploadProjectRequest) (*protos.UploadProjectResponse, error) {
 	s.logger.WithFields(logrus.Fields{
 		"project_name": req.ProjectName,
 		"file_format":  req.FileFormat,
@@ -98,12 +98,12 @@ func (s *BiarbalaServiceImpl) UploadProject(ctx context.Context, req *gen.Upload
 	// Record metrics
 	s.metrics.RecordFileUpload(req.FileFormat, "success", result.FileSize)
 
-	response := &gen.UploadProjectResponse{
+	response := &protos.UploadProjectResponse{
 		ProjectId:      result.ProjectID,
 		AccessPassword: result.AccessPassword,
 		ProjectUrl:     result.ProjectURL,
 		CreatedAt:      timestamppb.New(time.Now()),
-		Status:         gen.ProjectStatus_PROJECT_STATUS_ACTIVE,
+		Status:         protos.ProjectStatus_PROJECT_STATUS_ACTIVE,
 	}
 
 	s.logger.WithField("project_id", result.ProjectID).Info("Project uploaded successfully")
@@ -111,7 +111,7 @@ func (s *BiarbalaServiceImpl) UploadProject(ctx context.Context, req *gen.Upload
 }
 
 // GetProject retrieves project information
-func (s *BiarbalaServiceImpl) GetProject(ctx context.Context, req *gen.GetProjectRequest) (*gen.GetProjectResponse, error) {
+func (s *BiarbalaServiceImpl) GetProject(ctx context.Context, req *protos.GetProjectRequest) (*protos.GetProjectResponse, error) {
 	s.logger.WithField("project_id", req.ProjectId).Info("Get project request received")
 
 	// Validate request
@@ -134,7 +134,7 @@ func (s *BiarbalaServiceImpl) GetProject(ctx context.Context, req *gen.GetProjec
 	// Convert to protobuf
 	pbProject := s.convertProjectToProto(project)
 
-	response := &gen.GetProjectResponse{
+	response := &protos.GetProjectResponse{
 		Project: pbProject,
 	}
 
@@ -142,7 +142,7 @@ func (s *BiarbalaServiceImpl) GetProject(ctx context.Context, req *gen.GetProjec
 }
 
 // UpdateProject updates project settings
-func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *gen.UpdateProjectRequest) (*gen.UpdateProjectResponse, error) {
+func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *protos.UpdateProjectRequest) (*protos.UpdateProjectResponse, error) {
 	s.logger.WithField("project_id", req.ProjectId).Info("Update project request received")
 
 	// Validate request
@@ -187,7 +187,7 @@ func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *gen.Update
 	// Convert to protobuf
 	pbProject := s.convertProjectToProto(updatedProject)
 
-	response := &gen.UpdateProjectResponse{
+	response := &protos.UpdateProjectResponse{
 		Project: pbProject,
 	}
 
@@ -196,7 +196,7 @@ func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *gen.Update
 }
 
 // DeleteProject deletes a project
-func (s *BiarbalaServiceImpl) DeleteProject(ctx context.Context, req *gen.DeleteProjectRequest) (*emptypb.Empty, error) {
+func (s *BiarbalaServiceImpl) DeleteProject(ctx context.Context, req *protos.DeleteProjectRequest) (*emptypb.Empty, error) {
 	s.logger.WithField("project_id", req.ProjectId).Info("Delete project request received")
 
 	// Validate request
@@ -227,7 +227,7 @@ func (s *BiarbalaServiceImpl) DeleteProject(ctx context.Context, req *gen.Delete
 }
 
 // ListProjects lists user's projects
-func (s *BiarbalaServiceImpl) ListProjects(ctx context.Context, req *gen.ListProjectsRequest) (*gen.ListProjectsResponse, error) {
+func (s *BiarbalaServiceImpl) ListProjects(ctx context.Context, req *protos.ListProjectsRequest) (*protos.ListProjectsResponse, error) {
 	s.logger.WithField("user_id", req.UserId).Info("List projects request received")
 
 	// Validate request
@@ -253,12 +253,12 @@ func (s *BiarbalaServiceImpl) ListProjects(ctx context.Context, req *gen.ListPro
 	}
 
 	// Convert to protobuf
-	var pbProjects []*gen.Project
+	var pbProjects []*protos.Project
 	for _, project := range projects {
 		pbProjects = append(pbProjects, s.convertProjectToProto(project))
 	}
 
-	response := &gen.ListProjectsResponse{
+	response := &protos.ListProjectsResponse{
 		Projects:   pbProjects,
 		TotalCount: int32(totalCount),
 		Page:       page,
@@ -269,7 +269,7 @@ func (s *BiarbalaServiceImpl) ListProjects(ctx context.Context, req *gen.ListPro
 }
 
 // GetProjectMetrics retrieves project usage metrics
-func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *gen.GetProjectMetricsRequest) (*gen.GetProjectMetricsResponse, error) {
+func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *protos.GetProjectMetricsRequest) (*protos.GetProjectMetricsResponse, error) {
 	s.logger.WithField("project_id", req.ProjectId).Info("Get project metrics request received")
 
 	// Validate request
@@ -299,7 +299,7 @@ func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *gen.Ge
 	// Convert to protobuf
 	pbMetrics := s.convertMetricsToProto(metrics)
 
-	response := &gen.GetProjectMetricsResponse{
+	response := &protos.GetProjectMetricsResponse{
 		Metrics: pbMetrics,
 	}
 
@@ -307,10 +307,10 @@ func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *gen.Ge
 }
 
 // SetProjectDomain sets the domain for a project
-func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *gen.SetProjectDomainRequest) (*gen.SetProjectDomainResponse, error) {
+func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.SetProjectDomainRequest) (*protos.SetProjectDomainResponse, error) {
 	s.logger.WithFields(logrus.Fields{
-		"project_id": req.ProjectId,
-		"domain": req.Domain,
+		"project_id":       req.ProjectId,
+		"domain":           req.Domain,
 		"is_custom_domain": req.IsCustomDomain,
 	}).Info("Set project domain request received")
 
@@ -362,8 +362,8 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *gen.Set
 		return nil, status.Error(codes.Internal, "failed to set project domain")
 	}
 
-	response := &gen.SetProjectDomainResponse{
-		Domain: req.Domain,
+	response := &protos.SetProjectDomainResponse{
+		Domain:               req.Domain,
 		RequiresVerification: req.IsCustomDomain,
 	}
 
@@ -399,10 +399,10 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *gen.Set
 }
 
 // VerifyDomain verifies domain ownership
-func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *gen.VerifyDomainRequest) (*gen.VerifyDomainResponse, error) {
+func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *protos.VerifyDomainRequest) (*protos.VerifyDomainResponse, error) {
 	s.logger.WithFields(logrus.Fields{
 		"project_id": req.ProjectId,
-		"domain": req.Domain,
+		"domain":     req.Domain,
 	}).Info("Verify domain request received")
 
 	// Validate request
@@ -445,7 +445,7 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *gen.VerifyD
 	verified, err := s.domainVerifier.VerifyChallenge(ctx, challenge)
 	if err != nil {
 		s.logger.WithError(err).Error("Domain verification failed")
-		return &gen.VerifyDomainResponse{
+		return &protos.VerifyDomainResponse{
 			Verified: false,
 			Message:  fmt.Sprintf("Verification failed: %s", err.Error()),
 		}, nil
@@ -455,10 +455,10 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *gen.VerifyD
 		// Update verification status
 		now := time.Now()
 		updates := map[string]interface{}{
-			"verified":     true,
-			"verified_at":  now,
+			"verified":    true,
+			"verified_at": now,
 		}
-		
+
 		if err := s.storage.UpdateDomainVerification(ctx, req.ProjectId, req.Domain, updates); err != nil {
 			s.logger.WithError(err).Error("Failed to update domain verification status")
 			return nil, status.Error(codes.Internal, "failed to update verification status")
@@ -477,24 +477,24 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *gen.VerifyD
 		}
 
 		s.logger.WithField("domain", req.Domain).Info("Domain verification successful")
-		return &gen.VerifyDomainResponse{
+		return &protos.VerifyDomainResponse{
 			Verified:   true,
 			Message:    "Domain verification successful",
 			VerifiedAt: timestamppb.New(now),
 		}, nil
 	}
 
-	return &gen.VerifyDomainResponse{
+	return &protos.VerifyDomainResponse{
 		Verified: false,
 		Message:  "Domain verification failed - TXT record not found or does not match",
 	}, nil
 }
 
 // GetDomainVerificationStatus gets the verification status of a domain
-func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, req *gen.GetDomainVerificationStatusRequest) (*gen.GetDomainVerificationStatusResponse, error) {
+func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, req *protos.GetDomainVerificationStatusRequest) (*protos.GetDomainVerificationStatusResponse, error) {
 	s.logger.WithFields(logrus.Fields{
 		"project_id": req.ProjectId,
-		"domain": req.Domain,
+		"domain":     req.Domain,
 	}).Info("Get domain verification status request received")
 
 	// Validate request
@@ -531,12 +531,12 @@ func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, r
 		status = "expired"
 	}
 
-	response := &gen.GetDomainVerificationStatusResponse{
-		Domain:     req.Domain,
-		Verified:   verification.Verified,
-		Status:     status,
-		TxtRecord:  verification.TXTRecord,
-		ExpiresAt:  timestamppb.New(verification.ExpiresAt),
+	response := &protos.GetDomainVerificationStatusResponse{
+		Domain:    req.Domain,
+		Verified:  verification.Verified,
+		Status:    status,
+		TxtRecord: verification.TXTRecord,
+		ExpiresAt: timestamppb.New(verification.ExpiresAt),
 	}
 
 	// Add verification instructions if not verified
@@ -555,8 +555,8 @@ func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, r
 }
 
 // HealthCheck provides health status
-func (s *BiarbalaServiceImpl) HealthCheck(ctx context.Context, req *emptypb.Empty) (*gen.HealthCheckResponse, error) {
-	response := &gen.HealthCheckResponse{
+func (s *BiarbalaServiceImpl) HealthCheck(ctx context.Context, req *emptypb.Empty) (*protos.HealthCheckResponse, error) {
+	response := &protos.HealthCheckResponse{
 		Status:    "healthy",
 		Version:   "1.0.0",
 		Timestamp: timestamppb.New(time.Now()),
@@ -566,22 +566,22 @@ func (s *BiarbalaServiceImpl) HealthCheck(ctx context.Context, req *emptypb.Empt
 }
 
 // convertProjectToProto converts a storage.Project to protobuf Project
-func (s *BiarbalaServiceImpl) convertProjectToProto(project *storage.Project) *gen.Project {
-	status := gen.ProjectStatus_PROJECT_STATUS_UNSPECIFIED
+func (s *BiarbalaServiceImpl) convertProjectToProto(project *storage.Project) *protos.Project {
+	status := protos.ProjectStatus_PROJECT_STATUS_UNSPECIFIED
 	switch project.Status {
 	case "active":
-		status = gen.ProjectStatus_PROJECT_STATUS_ACTIVE
+		status = protos.ProjectStatus_PROJECT_STATUS_ACTIVE
 	case "uploading":
-		status = gen.ProjectStatus_PROJECT_STATUS_UPLOADING
+		status = protos.ProjectStatus_PROJECT_STATUS_UPLOADING
 	case "processing":
-		status = gen.ProjectStatus_PROJECT_STATUS_PROCESSING
+		status = protos.ProjectStatus_PROJECT_STATUS_PROCESSING
 	case "error":
-		status = gen.ProjectStatus_PROJECT_STATUS_ERROR
+		status = protos.ProjectStatus_PROJECT_STATUS_ERROR
 	case "deleted":
-		status = gen.ProjectStatus_PROJECT_STATUS_DELETED
+		status = protos.ProjectStatus_PROJECT_STATUS_DELETED
 	}
 
-	return &gen.Project{
+	return &protos.Project{
 		ProjectId:   project.ProjectID,
 		ProjectName: project.ProjectName,
 		UserId:      project.UserID,
@@ -596,10 +596,10 @@ func (s *BiarbalaServiceImpl) convertProjectToProto(project *storage.Project) *g
 }
 
 // convertMetricsToProto converts storage.ProjectMetrics to protobuf ProjectMetrics
-func (s *BiarbalaServiceImpl) convertMetricsToProto(metrics *storage.ProjectMetrics) *gen.ProjectMetrics {
-	var dailyMetrics []*gen.DailyMetrics
+func (s *BiarbalaServiceImpl) convertMetricsToProto(metrics *storage.ProjectMetrics) *protos.ProjectMetrics {
+	var dailyMetrics []*protos.DailyMetrics
 	for _, dm := range metrics.DailyMetrics {
-		dailyMetrics = append(dailyMetrics, &gen.DailyMetrics{
+		dailyMetrics = append(dailyMetrics, &protos.DailyMetrics{
 			Date:           timestamppb.New(dm.Date),
 			Requests:       dm.Requests,
 			BandwidthBytes: dm.BandwidthBytes,
@@ -607,7 +607,7 @@ func (s *BiarbalaServiceImpl) convertMetricsToProto(metrics *storage.ProjectMetr
 		})
 	}
 
-	return &gen.ProjectMetrics{
+	return &protos.ProjectMetrics{
 		ProjectId:           metrics.ProjectID,
 		TotalRequests:       metrics.TotalRequests,
 		TotalBandwidthBytes: metrics.TotalBandwidth,

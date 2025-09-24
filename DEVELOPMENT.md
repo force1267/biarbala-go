@@ -186,6 +186,19 @@ biarbala/
 - SSL certificate validation
 - Domain-specific error handling
 
+#### 12. Web-gRPC Support (`pkg/server/server.go`)
+- HTTP-to-gRPC bridge implementation
+- RESTful API endpoints for web clients
+- Multipart file upload support
+- JSON-to-protobuf conversion
+- CORS headers for web integration
+- API endpoints:
+  - `POST /api/v1/projects` - Upload project
+  - `GET /api/v1/projects/{id}` - Get project
+  - `PUT /api/v1/projects/{id}` - Update project
+  - `DELETE /api/v1/projects/{id}` - Delete project
+  - `GET /api/v1/health` - Health check
+
 ### Infrastructure Components
 
 #### Docker Configuration

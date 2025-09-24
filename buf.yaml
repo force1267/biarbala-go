@@ -1,7 +1,7 @@
 version: v2
 modules:
   - path: protos
-    name: github.com/force1267/biarbala-go/protos
+    name: buf.build/force1267/biarbala-go
 breaking:
   use:
     - FILE

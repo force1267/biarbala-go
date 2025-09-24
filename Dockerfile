@@ -2,7 +2,11 @@
 FROM golang:1.25-alpine AS builder
 
 # Install dependencies
-RUN apk add --no-cache git ca-certificates tzdata
+RUN apk add --no-cache git ca-certificates tzdata protobuf-dev
+
+# Install Go protobuf plugins
+RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@latest
+RUN go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@latest
 
 # Set working directory
 WORKDIR /app
@@ -16,8 +20,8 @@ RUN go mod download
 # Copy source code
 COPY . .
 
-# Generate protobuf code
-RUN chmod +x scripts/generate-protos.sh && ./scripts/generate-protos.sh
+# Generate protobuf code using protoc directly
+RUN protoc --go_out=protos/gen --go_opt=paths=source_relative --go-grpc_out=protos/gen --go-grpc_opt=paths=source_relative protos/biarbala.proto
 
 # Build the application
 RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o main ./cmd/server

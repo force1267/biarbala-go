@@ -53,11 +53,11 @@ func (s *UploadService) UploadProject(ctx context.Context, projectName, userID s
 	// Generate project ID and password
 	projectID := uuid.New().String()
 	accessPassword := generatePassword()
-	
+
 	// Generate default subdomain
 	defaultSubdomain := s.generateUniqueSubdomain()
 	defaultDomain := defaultSubdomain + "." + domain.MainDomain
-	
+
 	// Create project directory
 	projectDir := filepath.Join(s.config.Server.Static.ServeDir, projectID)
 	if err := os.MkdirAll(projectDir, 0755); err != nil {
@@ -341,7 +341,6 @@ func (s *UploadService) validateExtractedFiles(files []string) error {
 
 	// Check for common web files
 	hasIndex := false
-	hasPublic := false
 
 	for _, file := range files {
 		// Check for index.html
@@ -349,10 +348,8 @@ func (s *UploadService) validateExtractedFiles(files []string) error {
 			hasIndex = true
 		}
 
-		// Check for public directory
-		if strings.HasPrefix(file, "public/") {
-			hasPublic = true
-		}
+		// Check for public directory (validation only)
+		_ = strings.HasPrefix(file, "public/")
 
 		// Check for dangerous files
 		if strings.Contains(file, "..") || strings.Contains(file, "~") {
@@ -376,11 +373,11 @@ func generatePassword() string {
 // generateUniqueSubdomain generates a unique subdomain that doesn't exist in the database
 func (s *UploadService) generateUniqueSubdomain() string {
 	maxAttempts := 10
-	
+
 	for i := 0; i < maxAttempts; i++ {
 		subdomain := s.validator.GenerateSubdomain()
 		fullDomain := subdomain + "." + domain.MainDomain
-		
+
 		// Check if domain already exists
 		_, err := s.storage.GetProjectByDomain(context.Background(), fullDomain)
 		if err != nil {
@@ -388,7 +385,7 @@ func (s *UploadService) generateUniqueSubdomain() string {
 			return subdomain
 		}
 	}
-	
+
 	// Fallback to UUID-based subdomain if we can't generate a meaningful one
 	return "project-" + uuid.New().String()[:8]
 }

@@ -68,8 +68,8 @@ func main() {
 	// Initialize upload service
 	uploadService := upload.NewUploadService(cfg, log.Logger, storage)
 
-	// Initialize web service
-	webService := web.NewWebService(cfg, log.Logger, storage, m)
+	// Initialize web service (for future use)
+	_ = web.NewWebService(cfg, log.Logger, storage, m)
 
 	// Initialize Biarbala service
 	biarbalaService := server.NewBiarbalaService(cfg, log.Logger, storage, uploadService, m)
