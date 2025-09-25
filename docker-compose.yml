@@ -101,6 +101,7 @@ services:
     volumes:
       - ./nginx.conf:/etc/nginx/nginx.conf:ro
       - ./ssl:/etc/nginx/ssl:ro
+      - ./frontend:/app/frontend:ro
     depends_on:
       - biarbala
     networks:
