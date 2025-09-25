@@ -10,12 +10,16 @@ import (
 
 	"github.com/sirupsen/logrus"
 
+	"github.com/force1267/biarbala-go/pkg/auth"
 	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/database"
+	"github.com/force1267/biarbala-go/pkg/email"
 	"github.com/force1267/biarbala-go/pkg/logger"
 	"github.com/force1267/biarbala-go/pkg/metrics"
 	"github.com/force1267/biarbala-go/pkg/server"
 	"github.com/force1267/biarbala-go/pkg/storage"
 	"github.com/force1267/biarbala-go/pkg/upload"
+	"github.com/force1267/biarbala-go/pkg/users"
 	"github.com/force1267/biarbala-go/pkg/web"
 )
 
@@ -52,30 +56,69 @@ func main() {
 		}()
 	}
 
-	// Initialize storage
-	storage, err := storage.NewMongoDBStorage(cfg)
+	// Initialize database
+	db, err := database.NewMongoDBStorage(cfg)
 	if err != nil {
-		log.WithError(err).Fatal("Failed to initialize storage")
+		log.WithError(err).Fatal("Failed to initialize database")
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		if err := storage.Close(ctx); err != nil {
-			log.WithError(err).Error("Failed to close storage connection")
+		if err := db.Close(ctx); err != nil {
+			log.WithError(err).Error("Failed to close database connection")
 		}
 	}()
 
-	// Initialize upload service
-	uploadService := upload.NewUploadService(cfg, log.Logger, storage)
+	// Initialize object storage
+	objectStore, err := storage.NewMinIOStorage(cfg, log.Logger)
+	if err != nil {
+		log.WithError(err).Fatal("Failed to initialize object storage")
+	}
+	defer func() {
+		if err := objectStore.Close(); err != nil {
+			log.WithError(err).Error("Failed to close object storage connection")
+		}
+	}()
 
-	// Initialize web service (for future use)
-	_ = web.NewWebService(cfg, log.Logger, storage, m)
+	// Initialize email service
+	emailService := email.NewEmailService(&cfg.Email, log.Logger)
+
+	// Initialize user service
+	userService := users.NewUserService(&cfg.Auth.Keycloak, log.Logger)
+
+	// Initialize JWT service
+	jwtService := auth.NewJWTService(&cfg.Auth.JWT, log.Logger, userService)
+
+	// Initialize Keycloak service
+	keycloakService := auth.NewKeycloakService(&cfg.Auth.Keycloak, log.Logger, userService)
+
+	// Initialize identity service
+	identityService := auth.NewIdentityService(userService, emailService, jwtService, log.Logger)
+
+	// Register identity providers
+	if cfg.Auth.Keycloak.Enabled {
+		identityService.RegisterProvider("keycloak", keycloakService)
+		identityService.SetKeycloakService(keycloakService)
+		log.Info("Registered Keycloak identity provider")
+	}
+
+	// Initialize authentication middleware
+	authMiddleware := auth.NewAuthMiddleware(jwtService, keycloakService, log.Logger)
+
+	// Initialize upload service
+	uploadService := upload.NewUploadService(cfg, log.Logger, db, objectStore)
+
+	// Initialize web service
+	_ = web.NewWebService(cfg, log.Logger, db, objectStore, m)
 
 	// Initialize Biarbala service
-	biarbalaService := server.NewBiarbalaService(cfg, log.Logger, storage, uploadService, m)
+	biarbalaService := server.NewBiarbalaService(cfg, log.Logger, db, uploadService, m)
+
+	// Initialize user admin service
+	userAdminService := server.NewUserAdminService(cfg, log.Logger, userService, identityService)
 
 	// Initialize server
-	srv := server.New(cfg, log.Logger, m, biarbalaService)
+	srv := server.New(cfg, log.Logger, m, biarbalaService, userAdminService, identityService, authMiddleware)
 
 	// Create context for graceful shutdown
 	ctx, cancel := context.WithCancel(context.Background())

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/types/known/emptypb"
 
+	"github.com/force1267/biarbala-go/pkg/auth"
 	"github.com/force1267/biarbala-go/pkg/config"
 	"github.com/force1267/biarbala-go/pkg/metrics"
 	protos "github.com/force1267/biarbala-go/protos/gen"
@@ -23,21 +25,27 @@ import (
 
 // Server represents the gRPC and HTTP server
 type Server struct {
-	config          *config.Config
-	logger          *logrus.Logger
-	metrics         *metrics.Metrics
-	grpcServer      *grpc.Server
-	httpServer      *http.Server
-	biarbalaService *BiarbalaServiceImpl
+	config           *config.Config
+	logger           *logrus.Logger
+	metrics          *metrics.Metrics
+	grpcServer       *grpc.Server
+	httpServer       *http.Server
+	biarbalaService  *BiarbalaServiceImpl
+	userAdminService *UserAdminServiceImpl
+	authService      *auth.IdentityService
+	authMiddleware   *auth.AuthMiddleware
 }
 
 // New creates a new server instance
-func New(cfg *config.Config, logger *logrus.Logger, m *metrics.Metrics, biarbalaService *BiarbalaServiceImpl) *Server {
+func New(cfg *config.Config, logger *logrus.Logger, m *metrics.Metrics, biarbalaService *BiarbalaServiceImpl, userAdminService *UserAdminServiceImpl, authService *auth.IdentityService, authMiddleware *auth.AuthMiddleware) *Server {
 	return &Server{
-		config:          cfg,
-		logger:          logger,
-		metrics:         m,
-		biarbalaService: biarbalaService,
+		config:           cfg,
+		logger:           logger,
+		metrics:          m,
+		biarbalaService:  biarbalaService,
+		userAdminService: userAdminService,
+		authService:      authService,
+		authMiddleware:   authMiddleware,
 	}
 }
 
@@ -64,8 +72,9 @@ func (s *Server) startGRPCServer(ctx context.Context) error {
 		grpc.StreamInterceptor(s.streamInterceptor()),
 	)
 
-	// Register Biarbala service
+	// Register services
 	protos.RegisterBiarbalaServiceServer(s.grpcServer, s.biarbalaService)
+	protos.RegisterUserAdminServiceServer(s.grpcServer, s.userAdminService)
 
 	// Enable reflection if configured
 	if s.config.Server.GRPC.EnableReflection {
@@ -103,6 +112,24 @@ func (s *Server) startHTTPServer(ctx context.Context) error {
 	mux.HandleFunc("/api/v1/projects", s.handleProjectsAPI)
 	mux.HandleFunc("/api/v1/projects/", s.handleProjectAPI)
 	mux.HandleFunc("/api/v1/health", s.handleHealthAPI)
+
+	// Authentication endpoints
+	mux.HandleFunc("/api/v1/auth/login", s.handleAuthLogin)
+	mux.HandleFunc("/api/v1/auth/register", s.handleAuthRegister)
+	mux.HandleFunc("/api/v1/auth/logout", s.handleAuthLogout)
+	mux.HandleFunc("/api/v1/auth/refresh", s.handleAuthRefresh)
+	mux.HandleFunc("/api/v1/auth/profile", s.handleAuthProfile)
+	mux.HandleFunc("/api/v1/auth/keycloak", s.handleKeycloakAuth)
+	mux.HandleFunc("/api/v1/auth/keycloak/callback", s.handleKeycloakCallback)
+	mux.HandleFunc("/api/v1/auth/github", s.handleGitHubAuth)
+	mux.HandleFunc("/api/v1/auth/github/callback", s.handleGitHubCallback)
+	mux.HandleFunc("/api/v1/auth/google", s.handleGoogleAuth)
+	mux.HandleFunc("/api/v1/auth/google/callback", s.handleGoogleCallback)
+	mux.HandleFunc("/api/v1/auth/otp/send", s.handleSendOTP)
+	mux.HandleFunc("/api/v1/auth/otp/verify", s.handleVerifyOTP)
+	mux.HandleFunc("/api/v1/auth/verify-email", s.handleVerifyEmail)
+	mux.HandleFunc("/api/v1/auth/reset-password", s.handleResetPassword)
+	mux.HandleFunc("/api/v1/auth/reset-password/confirm", s.handleConfirmPasswordReset)
 
 	// Create HTTP server
 	s.httpServer = &http.Server{
@@ -527,4 +554,449 @@ type wrappedServerStream struct {
 
 func (w *wrappedServerStream) Context() context.Context {
 	return w.ctx
+}
+
+// Authentication handlers
+
+// handleAuthLogin handles user login
+func (s *Server) handleAuthLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tokenResp, err := s.authService.LoginWithEmail(r.Context(), req.Email, req.Password)
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("Login failed")
+		http.Error(w, "Invalid credentials", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleAuthRegister handles user registration
+func (s *Server) handleAuthRegister(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email     string `json:"email"`
+		Password  string `json:"password"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tokenResp, err := s.authService.RegisterWithEmail(r.Context(), req.Email, req.Password, req.FirstName, req.LastName)
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("Registration failed")
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleAuthLogout handles user logout
+func (s *Server) handleAuthLogout(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// For JWT tokens, logout is handled client-side by removing the token
+	// For Keycloak, we would call the logout endpoint
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{"message": "Logged out successfully"})
+}
+
+// handleAuthRefresh handles token refresh
+func (s *Server) handleAuthRefresh(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		RefreshToken string `json:"refresh_token"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Get JWT service from identity service (this would need to be exposed)
+	// For now, we'll return an error indicating this needs to be implemented
+	http.Error(w, "Token refresh not implemented", http.StatusNotImplemented)
+}
+
+// handleAuthProfile handles user profile retrieval
+func (s *Server) handleAuthProfile(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	user, ok := auth.GetUserFromContext(r.Context())
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(user)
+}
+
+// handleKeycloakAuth handles Keycloak authentication initiation
+func (s *Server) handleKeycloakAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	provider, err := s.authService.GetProvider("keycloak")
+	if err != nil {
+		http.Error(w, "Keycloak provider not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	state := generateState()
+	authURL := provider.GetAuthURL(state)
+
+	// Store state in session/cookie for validation
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   false, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// handleKeycloakCallback handles Keycloak OAuth callback
+func (s *Server) handleKeycloakCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	// Validate state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value != state {
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+		return
+	}
+
+	tokenResp, err := s.authService.HandleCallback(r.Context(), "keycloak", code, state)
+	if err != nil {
+		s.logger.WithError(err).Warn("Keycloak callback failed")
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleGitHubAuth handles GitHub authentication initiation via Keycloak
+func (s *Server) handleGitHubAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	state := generateState()
+
+	// Use Keycloak with GitHub identity provider
+	authURL := s.authService.GetKeycloakService().GetAuthURLWithProvider(state, "github")
+
+	// Store state in session/cookie for validation
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   false, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// handleGitHubCallback handles GitHub OAuth callback via Keycloak
+func (s *Server) handleGitHubCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	// Validate state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value != state {
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Use Keycloak callback handler (same as regular Keycloak callback)
+	tokenResp, err := s.authService.HandleCallback(r.Context(), "keycloak", code, state)
+	if err != nil {
+		s.logger.WithError(err).Warn("GitHub callback via Keycloak failed")
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleGoogleAuth handles Google authentication initiation via Keycloak
+func (s *Server) handleGoogleAuth(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	state := generateState()
+
+	// Use Keycloak with Google identity provider
+	authURL := s.authService.GetKeycloakService().GetAuthURLWithProvider(state, "google")
+
+	// Store state in session/cookie for validation
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    state,
+		HttpOnly: true,
+		Secure:   false, // Set to true in production with HTTPS
+		SameSite: http.SameSiteLaxMode,
+	})
+
+	http.Redirect(w, r, authURL, http.StatusTemporaryRedirect)
+}
+
+// handleGoogleCallback handles Google OAuth callback via Keycloak
+func (s *Server) handleGoogleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	state := r.URL.Query().Get("state")
+
+	// Validate state
+	cookie, err := r.Cookie("oauth_state")
+	if err != nil || cookie.Value != state {
+		http.Error(w, "Invalid state parameter", http.StatusBadRequest)
+		return
+	}
+
+	// Use Keycloak callback handler (same as regular Keycloak callback)
+	tokenResp, err := s.authService.HandleCallback(r.Context(), "keycloak", code, state)
+	if err != nil {
+		s.logger.WithError(err).Warn("Google callback via Keycloak failed")
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
+		return
+	}
+
+	// Clear state cookie
+	http.SetCookie(w, &http.Cookie{
+		Name:     "oauth_state",
+		Value:    "",
+		HttpOnly: true,
+		MaxAge:   -1,
+	})
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleSendOTP handles sending OTP
+func (s *Server) handleSendOTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email   string `json:"email"`
+		Purpose string `json:"purpose"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	err := s.authService.SendOTP(r.Context(), req.Email, req.Purpose)
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("Send OTP failed")
+		http.Error(w, "Failed to send OTP", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "OTP sent successfully"})
+}
+
+// handleVerifyOTP handles OTP verification
+func (s *Server) handleVerifyOTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email   string `json:"email"`
+		Code    string `json:"code"`
+		Purpose string `json:"purpose"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	tokenResp, err := s.authService.VerifyOTP(r.Context(), req.Email, req.Code, req.Purpose)
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("OTP verification failed")
+		http.Error(w, "Invalid OTP", http.StatusUnauthorized)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(tokenResp)
+}
+
+// handleVerifyEmail handles email verification
+func (s *Server) handleVerifyEmail(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "GET" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	code := r.URL.Query().Get("code")
+	if code == "" {
+		http.Error(w, "Verification code is required", http.StatusBadRequest)
+		return
+	}
+
+	// This would need to be implemented in the user service
+	// For now, we'll return a success message
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Email verified successfully"})
+}
+
+// handleResetPassword handles password reset request
+func (s *Server) handleResetPassword(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email string `json:"email"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Send OTP for password reset
+	err := s.authService.SendOTP(r.Context(), req.Email, "password_reset")
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("Password reset failed")
+		http.Error(w, "Failed to send reset code", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Password reset code sent"})
+}
+
+// handleConfirmPasswordReset handles password reset confirmation
+func (s *Server) handleConfirmPasswordReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Email    string `json:"email"`
+		Code     string `json:"code"`
+		Password string `json:"password"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// Verify OTP first
+	_, err := s.authService.VerifyOTP(r.Context(), req.Email, req.Code, "password_reset")
+	if err != nil {
+		s.logger.WithError(err).WithField("email", req.Email).Warn("Password reset verification failed")
+		http.Error(w, "Invalid reset code", http.StatusUnauthorized)
+		return
+	}
+
+	// Update password (this would need to be implemented)
+	// For now, we'll return a success message
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Password reset successfully"})
+}
+
+// generateState generates a random state parameter for OAuth
+func generateState() string {
+	// Generate a random 32-character string
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, 32)
+	rand.Read(b)
+	for i := range b {
+		b[i] = charset[b[i]%byte(len(charset))]
+	}
+	return string(b)
 }

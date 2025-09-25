@@ -3,7 +3,6 @@ package web
 import (
 	"fmt"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"time"
@@ -11,25 +10,28 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/database"
 	"github.com/force1267/biarbala-go/pkg/metrics"
 	"github.com/force1267/biarbala-go/pkg/storage"
 )
 
 // WebService handles static file serving
 type WebService struct {
-	config  *config.Config
-	logger  *logrus.Logger
-	storage *storage.MongoDBStorage
-	metrics *metrics.Metrics
+	config      *config.Config
+	logger      *logrus.Logger
+	database    *database.MongoDBStorage
+	objectStore *storage.MinIOStorage
+	metrics     *metrics.Metrics
 }
 
 // NewWebService creates a new web service
-func NewWebService(cfg *config.Config, logger *logrus.Logger, storage *storage.MongoDBStorage, m *metrics.Metrics) *WebService {
+func NewWebService(cfg *config.Config, logger *logrus.Logger, db *database.MongoDBStorage, objectStore *storage.MinIOStorage, m *metrics.Metrics) *WebService {
 	return &WebService{
-		config:  cfg,
-		logger:  logger,
-		storage: storage,
-		metrics: m,
+		config:      cfg,
+		logger:      logger,
+		database:    db,
+		objectStore: objectStore,
+		metrics:     m,
 	}
 }
 
@@ -38,7 +40,7 @@ func (s *WebService) ServeProject(w http.ResponseWriter, r *http.Request, projec
 	start := time.Now()
 
 	// Get project from database
-	project, err := s.storage.GetProject(r.Context(), projectID)
+	project, err := s.database.GetProject(r.Context(), projectID)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", projectID).Error("Failed to get project")
 		s.serveError(w, r, http.StatusNotFound, "Project not found")
@@ -58,7 +60,7 @@ func (s *WebService) ServeProject(w http.ResponseWriter, r *http.Request, projec
 		s.metrics.RecordHTTPRequest(r.Method, r.URL.Path, "200", duration)
 
 		// Record project access
-		if err := s.storage.RecordAccess(r.Context(), projectID, bandwidth); err != nil {
+		if err := s.database.RecordAccess(r.Context(), projectID, bandwidth); err != nil {
 			s.logger.WithError(err).Warn("Failed to record project access")
 		}
 	}()
@@ -75,22 +77,21 @@ func (s *WebService) ServeProject(w http.ResponseWriter, r *http.Request, projec
 
 // serveFile serves a specific file from the project
 func (s *WebService) serveFile(w http.ResponseWriter, r *http.Request, projectID, requestedPath string) {
-	projectDir := filepath.Join(s.config.Server.Static.ServeDir, projectID)
-
 	// Handle root path
 	if requestedPath == "/" {
 		requestedPath = "/index.html"
 	}
 
-	// Try to find the file
-	filePath := filepath.Join(projectDir, requestedPath)
+	// Clean the path
+	requestedPath = strings.TrimPrefix(requestedPath, "/")
 
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+	// Try to get the file from object storage
+	content, err := s.objectStore.GetProjectFile(r.Context(), projectID, requestedPath)
+	if err != nil {
 		// Try to serve 404.html
-		notFoundPath := filepath.Join(projectDir, "404.html")
-		if _, err := os.Stat(notFoundPath); err == nil {
-			s.serveStaticFile(w, r, notFoundPath)
+		notFoundContent, notFoundErr := s.objectStore.GetProjectFile(r.Context(), projectID, "404.html")
+		if notFoundErr == nil {
+			s.serveContent(w, r, notFoundContent, "404.html")
 			return
 		}
 
@@ -99,18 +100,18 @@ func (s *WebService) serveFile(w http.ResponseWriter, r *http.Request, projectID
 		return
 	}
 
-	// Serve the file
-	s.serveStaticFile(w, r, filePath)
+	// Serve the file content
+	s.serveContent(w, r, content, requestedPath)
 }
 
-// serveStaticFile serves a static file with appropriate headers
-func (s *WebService) serveStaticFile(w http.ResponseWriter, r *http.Request, filePath string) {
+// serveContent serves file content with appropriate headers
+func (s *WebService) serveContent(w http.ResponseWriter, r *http.Request, content []byte, fileName string) {
 	// Set content type based on file extension
-	contentType := s.getContentType(filePath)
+	contentType := s.getContentType(fileName)
 	w.Header().Set("Content-Type", contentType)
 
 	// Set cache headers for static assets
-	if s.isStaticAsset(filePath) {
+	if s.isStaticAsset(fileName) {
 		w.Header().Set("Cache-Control", "public, max-age=31536000") // 1 year
 		w.Header().Set("Expires", time.Now().Add(365*24*time.Hour).Format(time.RFC1123))
 	} else {
@@ -124,8 +125,11 @@ func (s *WebService) serveStaticFile(w http.ResponseWriter, r *http.Request, fil
 	w.Header().Set("X-Frame-Options", "DENY")
 	w.Header().Set("X-XSS-Protection", "1; mode=block")
 
-	// Serve the file
-	http.ServeFile(w, r, filePath)
+	// Set content length
+	w.Header().Set("Content-Length", fmt.Sprintf("%d", len(content)))
+
+	// Write the content
+	w.Write(content)
 }
 
 // serveError serves an error page
@@ -211,6 +215,7 @@ func (s *WebService) isStaticAsset(filePath string) bool {
 
 // calculateBandwidth estimates the bandwidth usage for a request
 func (s *WebService) calculateBandwidth(r *http.Request) int64 {
+	// TODO: Implement this
 	// This is a simplified calculation
 	// In a real implementation, you'd track the actual response size
 	return int64(len(r.URL.Path) + 1000) // Rough estimate
@@ -219,89 +224,88 @@ func (s *WebService) calculateBandwidth(r *http.Request) int64 {
 // ServeProjectByDomain serves static files for a project by domain
 func (s *WebService) ServeProjectByDomain(w http.ResponseWriter, r *http.Request, domain string) {
 	start := time.Now()
-	
+
 	// Get project from database by domain
-	project, err := s.storage.GetProjectByDomain(r.Context(), domain)
+	project, err := s.database.GetProjectByDomain(r.Context(), domain)
 	if err != nil {
 		s.logger.WithError(err).WithField("domain", domain).Error("Failed to get project by domain")
 		s.serveError(w, r, http.StatusNotFound, "Project not found")
 		return
 	}
-	
+
 	// Check if project is active
 	if project.Status != "active" {
 		s.serveError(w, r, http.StatusNotFound, "Project not available")
 		return
 	}
-	
+
 	// Check if domain is verified (for custom domains)
 	if project.IsCustomDomain && !project.DomainVerified {
 		s.serveError(w, r, http.StatusNotFound, "Domain not verified")
 		return
 	}
-	
+
 	// Record access metrics
 	defer func() {
 		duration := time.Since(start)
 		bandwidth := s.calculateBandwidth(r)
 		s.metrics.RecordHTTPRequest(r.Method, r.URL.Path, "200", duration)
-		
+
 		// Record project access
-		if err := s.storage.RecordAccess(r.Context(), project.ProjectID, bandwidth); err != nil {
+		if err := s.database.RecordAccess(r.Context(), project.ProjectID, bandwidth); err != nil {
 			s.logger.WithError(err).Warn("Failed to record project access")
 		}
 	}()
-	
+
 	// Get requested file path
 	requestedPath := r.URL.Path
 	if requestedPath == "" {
 		requestedPath = "/"
 	}
-	
+
 	// Serve the file
 	s.serveFileByProject(w, r, project, requestedPath)
 }
 
 // serveFileByProject serves a specific file from the project
-func (s *WebService) serveFileByProject(w http.ResponseWriter, r *http.Request, project *storage.Project, requestedPath string) {
-	projectDir := filepath.Join(s.config.Server.Static.ServeDir, project.ProjectID)
-	
+func (s *WebService) serveFileByProject(w http.ResponseWriter, r *http.Request, project *database.Project, requestedPath string) {
 	// Handle root path
 	if requestedPath == "/" {
 		requestedPath = "/index.html"
 	}
-	
-	// Try to find the file
-	filePath := filepath.Join(projectDir, requestedPath)
-	
-	// Check if file exists
-	if _, err := os.Stat(filePath); os.IsNotExist(err) {
+
+	// Clean the path
+	requestedPath = strings.TrimPrefix(requestedPath, "/")
+
+	// Try to get the file from object storage
+	content, err := s.objectStore.GetProjectFile(r.Context(), project.ProjectID, requestedPath)
+	if err != nil {
 		// Try to serve 404.html
-		notFoundPath := filepath.Join(projectDir, "404.html")
-		if _, err := os.Stat(notFoundPath); err == nil {
-			s.serveStaticFile(w, r, notFoundPath)
+		notFoundContent, notFoundErr := s.objectStore.GetProjectFile(r.Context(), project.ProjectID, "404.html")
+		if notFoundErr == nil {
+			s.serveContent(w, r, notFoundContent, "404.html")
 			return
 		}
-		
+
 		// Serve default 404
 		s.serveError(w, r, http.StatusNotFound, "File not found")
 		return
 	}
-	
-	// Serve the file
-	s.serveStaticFile(w, r, filePath)
+
+	// Serve the file content
+	s.serveContent(w, r, content, requestedPath)
 }
 
 // ServeHealthCheck serves the health check endpoint
 func (s *WebService) ServeHealthCheck(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	
+
 	healthResponse := `{
 		"status": "healthy",
 		"timestamp": "` + time.Now().Format(time.RFC3339) + `",
 		"version": "1.0.0"
 	}`
-	
+
 	fmt.Fprint(w, healthResponse)
 }

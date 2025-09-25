@@ -26,7 +26,7 @@ func New(level, format, output string) (*Logger, error) {
 	switch format {
 	case "json":
 		logger.SetFormatter(&logrus.JSONFormatter{})
-	case "text":
+	case "txt", "text":
 		logger.SetFormatter(&logrus.TextFormatter{})
 	default:
 		logger.SetFormatter(&logrus.JSONFormatter{})

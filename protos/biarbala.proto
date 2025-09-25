@@ -36,6 +36,39 @@ service BiarbalaService {
   rpc HealthCheck(google.protobuf.Empty) returns (HealthCheckResponse);
 }
 
+// UserAdminService provides user management functionality
+service UserAdminService {
+  // Create a new user
+  rpc CreateUser(CreateUserRequest) returns (CreateUserResponse);
+  
+  // Get user information
+  rpc GetUser(GetUserRequest) returns (GetUserResponse);
+  
+  // Update user information
+  rpc UpdateUser(UpdateUserRequest) returns (UpdateUserResponse);
+  
+  // Delete a user
+  rpc DeleteUser(DeleteUserRequest) returns (google.protobuf.Empty);
+  
+  // List users with pagination
+  rpc ListUsers(ListUsersRequest) returns (ListUsersResponse);
+  
+  // Change user password
+  rpc ChangeUserPassword(ChangeUserPasswordRequest) returns (google.protobuf.Empty);
+  
+  // Reset user password
+  rpc ResetUserPassword(ResetUserPasswordRequest) returns (ResetUserPasswordResponse);
+  
+  // Update user status (active, suspended, etc.)
+  rpc UpdateUserStatus(UpdateUserStatusRequest) returns (google.protobuf.Empty);
+  
+  // Assign roles to user
+  rpc AssignUserRoles(AssignUserRolesRequest) returns (google.protobuf.Empty);
+  
+  // Remove roles from user
+  rpc RemoveUserRoles(RemoveUserRolesRequest) returns (google.protobuf.Empty);
+}
+
 // UploadProjectRequest contains the file upload data
 message UploadProjectRequest {
   string project_name = 1;
@@ -200,4 +233,107 @@ message GetDomainVerificationStatusResponse {
   string txt_record = 4;
   google.protobuf.Timestamp expires_at = 5;
   string verification_instructions = 6;
+}
+
+// User management messages
+message User {
+  string user_id = 1;
+  string email = 2;
+  string username = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string user_type = 6; // public, user, admin
+  string status = 7; // pending, active, suspended, deleted
+  bool email_verified = 8;
+  string provider = 9; // keycloak, github, google, email
+  string provider_id = 10;
+  string avatar_url = 11;
+  google.protobuf.Timestamp last_login_at = 12;
+  google.protobuf.Timestamp created_at = 13;
+  google.protobuf.Timestamp updated_at = 14;
+  map<string, string> settings = 15;
+}
+
+message CreateUserRequest {
+  string email = 1;
+  string username = 2;
+  string first_name = 3;
+  string last_name = 4;
+  string password = 5;
+  string user_type = 6; // user, admin
+}
+
+message CreateUserResponse {
+  User user = 1;
+  string message = 2;
+}
+
+message GetUserRequest {
+  string user_id = 1;
+}
+
+message GetUserResponse {
+  User user = 1;
+}
+
+message UpdateUserRequest {
+  string user_id = 1;
+  string email = 2;
+  string username = 3;
+  string first_name = 4;
+  string last_name = 5;
+  string avatar_url = 6;
+  map<string, string> settings = 7;
+}
+
+message UpdateUserResponse {
+  User user = 1;
+  string message = 2;
+}
+
+message DeleteUserRequest {
+  string user_id = 1;
+}
+
+message ListUsersRequest {
+  string user_type = 1; // optional filter
+  int32 page = 2;
+  int32 page_size = 3;
+}
+
+message ListUsersResponse {
+  repeated User users = 1;
+  int64 total_count = 2;
+  int32 page = 3;
+  int32 page_size = 4;
+}
+
+message ChangeUserPasswordRequest {
+  string user_id = 1;
+  string current_password = 2;
+  string new_password = 3;
+}
+
+message ResetUserPasswordRequest {
+  string user_id = 1;
+  string new_password = 2;
+}
+
+message ResetUserPasswordResponse {
+  string message = 1;
+}
+
+message UpdateUserStatusRequest {
+  string user_id = 1;
+  string status = 2; // pending, active, suspended, deleted
+}
+
+message AssignUserRolesRequest {
+  string user_id = 1;
+  repeated string roles = 2;
+}
+
+message RemoveUserRolesRequest {
+  string user_id = 1;
+  repeated string roles = 2;
 }

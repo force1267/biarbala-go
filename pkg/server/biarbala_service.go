@@ -12,10 +12,10 @@ import (
 	"google.golang.org/protobuf/types/known/timestamppb"
 
 	"github.com/force1267/biarbala-go/pkg/config"
+	"github.com/force1267/biarbala-go/pkg/database"
 	"github.com/force1267/biarbala-go/pkg/domain"
 	"github.com/force1267/biarbala-go/pkg/metrics"
 	"github.com/force1267/biarbala-go/pkg/ssl"
-	"github.com/force1267/biarbala-go/pkg/storage"
 	"github.com/force1267/biarbala-go/pkg/upload"
 	protos "github.com/force1267/biarbala-go/protos/gen"
 )
@@ -25,7 +25,7 @@ type BiarbalaServiceImpl struct {
 	protos.UnimplementedBiarbalaServiceServer
 	config             *config.Config
 	logger             *logrus.Logger
-	storage            *storage.MongoDBStorage
+	database           *database.MongoDBStorage
 	uploadService      *upload.UploadService
 	metrics            *metrics.Metrics
 	domainValidator    *domain.SubdomainValidator
@@ -34,7 +34,7 @@ type BiarbalaServiceImpl struct {
 }
 
 // NewBiarbalaService creates a new BiarbalaService implementation
-func NewBiarbalaService(cfg *config.Config, logger *logrus.Logger, storage *storage.MongoDBStorage, uploadService *upload.UploadService, m *metrics.Metrics) *BiarbalaServiceImpl {
+func NewBiarbalaService(cfg *config.Config, logger *logrus.Logger, db *database.MongoDBStorage, uploadService *upload.UploadService, m *metrics.Metrics) *BiarbalaServiceImpl {
 	// Initialize domain services
 	domainValidator := domain.NewSubdomainValidator()
 	domainVerifier := domain.NewDomainVerifier(logger)
@@ -46,7 +46,7 @@ func NewBiarbalaService(cfg *config.Config, logger *logrus.Logger, storage *stor
 	return &BiarbalaServiceImpl{
 		config:             cfg,
 		logger:             logger,
-		storage:            storage,
+		database:           db,
 		uploadService:      uploadService,
 		metrics:            m,
 		domainValidator:    domainValidator,
@@ -120,7 +120,7 @@ func (s *BiarbalaServiceImpl) GetProject(ctx context.Context, req *protos.GetPro
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -151,7 +151,7 @@ func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *protos.Upd
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -172,13 +172,13 @@ func (s *BiarbalaServiceImpl) UpdateProject(ctx context.Context, req *protos.Upd
 	}
 
 	// Update project
-	if err := s.storage.UpdateProject(ctx, req.ProjectId, updates); err != nil {
+	if err := s.database.UpdateProject(ctx, req.ProjectId, updates); err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to update project")
 		return nil, status.Error(codes.Internal, "failed to update project")
 	}
 
 	// Get updated project
-	updatedProject, err := s.storage.GetProject(ctx, req.ProjectId)
+	updatedProject, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get updated project")
 		return nil, status.Error(codes.Internal, "failed to get updated project")
@@ -205,7 +205,7 @@ func (s *BiarbalaServiceImpl) DeleteProject(ctx context.Context, req *protos.Del
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -217,7 +217,7 @@ func (s *BiarbalaServiceImpl) DeleteProject(ctx context.Context, req *protos.Del
 	}
 
 	// Delete project
-	if err := s.storage.DeleteProject(ctx, req.ProjectId); err != nil {
+	if err := s.database.DeleteProject(ctx, req.ProjectId); err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to delete project")
 		return nil, status.Error(codes.Internal, "failed to delete project")
 	}
@@ -246,7 +246,7 @@ func (s *BiarbalaServiceImpl) ListProjects(ctx context.Context, req *protos.List
 	}
 
 	// Get projects from storage
-	projects, totalCount, err := s.storage.ListProjects(ctx, req.UserId, int(page), int(pageSize))
+	projects, totalCount, err := s.database.ListProjects(ctx, req.UserId, int(page), int(pageSize))
 	if err != nil {
 		s.logger.WithError(err).WithField("user_id", req.UserId).Error("Failed to list projects")
 		return nil, status.Error(codes.Internal, "failed to list projects")
@@ -278,7 +278,7 @@ func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *protos
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -290,7 +290,7 @@ func (s *BiarbalaServiceImpl) GetProjectMetrics(ctx context.Context, req *protos
 	}
 
 	// Get metrics from storage
-	metrics, err := s.storage.GetProjectMetrics(ctx, req.ProjectId)
+	metrics, err := s.database.GetProjectMetrics(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project metrics")
 		return nil, status.Error(codes.Internal, "failed to get project metrics")
@@ -323,7 +323,7 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -351,13 +351,13 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.
 	}
 
 	// Check if domain is already in use
-	existingProject, err := s.storage.GetProjectByDomain(ctx, req.Domain)
+	existingProject, err := s.database.GetProjectByDomain(ctx, req.Domain)
 	if err == nil && existingProject.ProjectID != req.ProjectId {
 		return nil, status.Error(codes.AlreadyExists, "domain is already in use by another project")
 	}
 
 	// Set domain in database
-	if err := s.storage.SetProjectDomain(ctx, req.ProjectId, req.Domain, req.IsCustomDomain); err != nil {
+	if err := s.database.SetProjectDomain(ctx, req.ProjectId, req.Domain, req.IsCustomDomain); err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to set project domain")
 		return nil, status.Error(codes.Internal, "failed to set project domain")
 	}
@@ -376,7 +376,7 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.
 		}
 
 		// Store verification challenge
-		verification := &storage.DomainVerification{
+		verification := &database.DomainVerification{
 			ProjectID: req.ProjectId,
 			Domain:    req.Domain,
 			TXTRecord: challenge.TXTRecord,
@@ -385,7 +385,7 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.
 			ExpiresAt: challenge.ExpiresAt,
 		}
 
-		if err := s.storage.CreateDomainVerification(ctx, verification); err != nil {
+		if err := s.database.CreateDomainVerification(ctx, verification); err != nil {
 			s.logger.WithError(err).Error("Failed to store domain verification challenge")
 			return nil, status.Error(codes.Internal, "failed to store verification challenge")
 		}
@@ -414,7 +414,7 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *protos.Veri
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -426,7 +426,7 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *protos.Veri
 	}
 
 	// Get verification challenge
-	verification, err := s.storage.GetDomainVerification(ctx, req.ProjectId, req.Domain)
+	verification, err := s.database.GetDomainVerification(ctx, req.ProjectId, req.Domain)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get domain verification challenge")
 		return nil, status.Error(codes.NotFound, "verification challenge not found")
@@ -459,13 +459,13 @@ func (s *BiarbalaServiceImpl) VerifyDomain(ctx context.Context, req *protos.Veri
 			"verified_at": now,
 		}
 
-		if err := s.storage.UpdateDomainVerification(ctx, req.ProjectId, req.Domain, updates); err != nil {
+		if err := s.database.UpdateDomainVerification(ctx, req.ProjectId, req.Domain, updates); err != nil {
 			s.logger.WithError(err).Error("Failed to update domain verification status")
 			return nil, status.Error(codes.Internal, "failed to update verification status")
 		}
 
 		// Mark project domain as verified
-		if err := s.storage.VerifyProjectDomain(ctx, req.ProjectId); err != nil {
+		if err := s.database.VerifyProjectDomain(ctx, req.ProjectId); err != nil {
 			s.logger.WithError(err).Error("Failed to verify project domain")
 			return nil, status.Error(codes.Internal, "failed to verify project domain")
 		}
@@ -506,7 +506,7 @@ func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, r
 	}
 
 	// Get project from storage
-	project, err := s.storage.GetProject(ctx, req.ProjectId)
+	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
 		return nil, status.Error(codes.NotFound, "project not found")
@@ -518,7 +518,7 @@ func (s *BiarbalaServiceImpl) GetDomainVerificationStatus(ctx context.Context, r
 	}
 
 	// Get verification challenge
-	verification, err := s.storage.GetDomainVerification(ctx, req.ProjectId, req.Domain)
+	verification, err := s.database.GetDomainVerification(ctx, req.ProjectId, req.Domain)
 	if err != nil {
 		s.logger.WithError(err).Error("Failed to get domain verification challenge")
 		return nil, status.Error(codes.NotFound, "verification challenge not found")
@@ -566,7 +566,7 @@ func (s *BiarbalaServiceImpl) HealthCheck(ctx context.Context, req *emptypb.Empt
 }
 
 // convertProjectToProto converts a storage.Project to protobuf Project
-func (s *BiarbalaServiceImpl) convertProjectToProto(project *storage.Project) *protos.Project {
+func (s *BiarbalaServiceImpl) convertProjectToProto(project *database.Project) *protos.Project {
 	status := protos.ProjectStatus_PROJECT_STATUS_UNSPECIFIED
 	switch project.Status {
 	case "active":
@@ -596,7 +596,7 @@ func (s *BiarbalaServiceImpl) convertProjectToProto(project *storage.Project) *p
 }
 
 // convertMetricsToProto converts storage.ProjectMetrics to protobuf ProjectMetrics
-func (s *BiarbalaServiceImpl) convertMetricsToProto(metrics *storage.ProjectMetrics) *protos.ProjectMetrics {
+func (s *BiarbalaServiceImpl) convertMetricsToProto(metrics *database.ProjectMetrics) *protos.ProjectMetrics {
 	var dailyMetrics []*protos.DailyMetrics
 	for _, dm := range metrics.DailyMetrics {
 		dailyMetrics = append(dailyMetrics, &protos.DailyMetrics{

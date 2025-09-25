@@ -11,11 +11,14 @@ import (
 type Config struct {
 	Server   ServerConfig   `mapstructure:"server"`
 	Database DatabaseConfig `mapstructure:"database"`
+	Storage  StorageConfig  `mapstructure:"storage"`
 	Cache    CacheConfig    `mapstructure:"cache"`
 	Logging  LoggingConfig  `mapstructure:"logging"`
 	Metrics  MetricsConfig  `mapstructure:"metrics"`
 	Upload   UploadConfig   `mapstructure:"upload"`
 	Security SecurityConfig `mapstructure:"security"`
+	Auth     AuthConfig     `mapstructure:"auth"`
+	Email    EmailConfig    `mapstructure:"email"`
 }
 
 // ServerConfig holds server configuration
@@ -47,7 +50,22 @@ type StaticConfig struct {
 
 // DatabaseConfig holds database configuration
 type DatabaseConfig struct {
-	MongoDB MongoDBConfig `mapstructure:"mongodb"`
+	MongoDB    MongoDBConfig    `mapstructure:"mongodb"`
+	PostgreSQL PostgreSQLConfig `mapstructure:"postgresql"`
+}
+
+// StorageConfig holds object storage configuration
+type StorageConfig struct {
+	MinIO MinIOConfig `mapstructure:"minio"`
+}
+
+// MinIOConfig holds MinIO configuration
+type MinIOConfig struct {
+	Endpoint   string `mapstructure:"endpoint"`
+	AccessKey  string `mapstructure:"access_key"`
+	SecretKey  string `mapstructure:"secret_key"`
+	UseSSL     bool   `mapstructure:"use_ssl"`
+	BucketName string `mapstructure:"bucket_name"`
 }
 
 // MongoDBConfig holds MongoDB configuration
@@ -55,6 +73,16 @@ type MongoDBConfig struct {
 	URI      string        `mapstructure:"uri"`
 	Database string        `mapstructure:"database"`
 	Timeout  time.Duration `mapstructure:"timeout"`
+}
+
+// PostgreSQLConfig holds PostgreSQL configuration
+type PostgreSQLConfig struct {
+	Host     string `mapstructure:"host"`
+	Port     int    `mapstructure:"port"`
+	Database string `mapstructure:"database"`
+	Username string `mapstructure:"username"`
+	Password string `mapstructure:"password"`
+	SSLMode  string `mapstructure:"ssl_mode"`
 }
 
 // CacheConfig holds cache configuration
@@ -107,6 +135,50 @@ type RateLimitConfig struct {
 	RequestsPerMinute int  `mapstructure:"requests_per_minute"`
 }
 
+// AuthConfig holds authentication configuration
+type AuthConfig struct {
+	Keycloak KeycloakConfig `mapstructure:"keycloak"`
+	JWT      JWTConfig      `mapstructure:"jwt"`
+	// GitHub and Google OAuth are now configured in Keycloak as identity providers
+}
+
+// KeycloakConfig holds Keycloak configuration
+type KeycloakConfig struct {
+	Enabled       bool   `mapstructure:"enabled"`
+	ServerURL     string `mapstructure:"server_url"`
+	Realm         string `mapstructure:"realm"`
+	ClientID      string `mapstructure:"client_id"`
+	ClientSecret  string `mapstructure:"client_secret"`
+	AdminUsername string `mapstructure:"admin_username"`
+	AdminPassword string `mapstructure:"admin_password"`
+	RedirectURL   string `mapstructure:"redirect_url"`
+	LogoutURL     string `mapstructure:"logout_url"`
+	Database      string `mapstructure:"database"` // dev-file, dev-mem, postgres
+	DBURL         string `mapstructure:"db_url"`   // Database connection URL
+}
+
+// JWTConfig holds JWT configuration
+type JWTConfig struct {
+	SecretKey         string        `mapstructure:"secret_key"`
+	Expiration        time.Duration `mapstructure:"expiration"`
+	RefreshExpiration time.Duration `mapstructure:"refresh_expiration"`
+}
+
+// GitHub and Google OAuth configurations are now handled in Keycloak as identity providers
+
+// EmailConfig holds email configuration
+type EmailConfig struct {
+	Enabled      bool   `mapstructure:"enabled"`
+	SMTPHost     string `mapstructure:"smtp_host"`
+	SMTPPort     int    `mapstructure:"smtp_port"`
+	SMTPUsername string `mapstructure:"smtp_username"`
+	SMTPPassword string `mapstructure:"smtp_password"`
+	UseTLS       bool   `mapstructure:"use_tls"`
+	FromEmail    string `mapstructure:"from_email"`
+	FromName     string `mapstructure:"from_name"`
+	BaseURL      string `mapstructure:"base_url"`
+}
+
 // Load loads configuration from file and environment variables
 func Load() (*Config, error) {
 	viper.SetConfigName("config")
@@ -148,6 +220,19 @@ func setDefaults() {
 	viper.SetDefault("database.mongodb.database", "biarbala")
 	viper.SetDefault("database.mongodb.timeout", "30s")
 
+	viper.SetDefault("database.postgresql.host", "localhost")
+	viper.SetDefault("database.postgresql.port", 5432)
+	viper.SetDefault("database.postgresql.database", "keycloak")
+	viper.SetDefault("database.postgresql.username", "keycloak")
+	viper.SetDefault("database.postgresql.password", "keycloak")
+	viper.SetDefault("database.postgresql.ssl_mode", "disable")
+
+	viper.SetDefault("storage.minio.endpoint", "localhost:9000")
+	viper.SetDefault("storage.minio.access_key", "minioadmin")
+	viper.SetDefault("storage.minio.secret_key", "minioadmin")
+	viper.SetDefault("storage.minio.use_ssl", false)
+	viper.SetDefault("storage.minio.bucket_name", "biarbala")
+
 	viper.SetDefault("cache.redis.addr", "localhost:6379")
 	viper.SetDefault("cache.redis.password", "")
 	viper.SetDefault("cache.redis.db", 0)
@@ -167,4 +252,31 @@ func setDefaults() {
 
 	viper.SetDefault("security.rate_limit.enabled", true)
 	viper.SetDefault("security.rate_limit.requests_per_minute", 60)
+
+	viper.SetDefault("auth.keycloak.enabled", true)
+	viper.SetDefault("auth.keycloak.server_url", "http://localhost:8082")
+	viper.SetDefault("auth.keycloak.realm", "biarbala")
+	viper.SetDefault("auth.keycloak.client_id", "biarbala-client")
+	viper.SetDefault("auth.keycloak.client_secret", "biarbala-secret")
+	viper.SetDefault("auth.keycloak.admin_username", "admin")
+	viper.SetDefault("auth.keycloak.admin_password", "admin123")
+	viper.SetDefault("auth.keycloak.redirect_url", "http://localhost:8081/auth/callback")
+	viper.SetDefault("auth.keycloak.logout_url", "http://localhost:8081/auth/logout")
+	viper.SetDefault("auth.keycloak.database", "dev-file") // dev-file, dev-mem, postgres
+	viper.SetDefault("auth.keycloak.db_url", "jdbc:postgresql://localhost:5432/keycloak")
+
+	viper.SetDefault("auth.jwt.secret_key", "biarbala-jwt-secret-key-change-in-production")
+	viper.SetDefault("auth.jwt.expiration", "24h")
+	viper.SetDefault("auth.jwt.refresh_expiration", "168h") // 7 days
+	// GitHub and Google OAuth configurations are now handled in Keycloak
+
+	viper.SetDefault("email.enabled", false)
+	viper.SetDefault("email.smtp_host", "localhost")
+	viper.SetDefault("email.smtp_port", 587)
+	viper.SetDefault("email.smtp_username", "")
+	viper.SetDefault("email.smtp_password", "")
+	viper.SetDefault("email.use_tls", true)
+	viper.SetDefault("email.from_email", "noreply@biarbala.ir")
+	viper.SetDefault("email.from_name", "Biarbala")
+	viper.SetDefault("email.base_url", "http://localhost:8081")
 }

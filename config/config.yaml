@@ -16,6 +16,21 @@ database:
     uri: "mongodb://localhost:27017"
     database: "biarbala"
     timeout: 30s
+  postgresql:
+    host: "localhost"
+    port: 5432
+    database: "keycloak"
+    username: "keycloak"
+    password: "keycloak"
+    ssl_mode: "disable"
+
+storage:
+  minio:
+    endpoint: "localhost:9000"
+    access_key: "minioadmin"
+    secret_key: "minioadmin"
+    use_ssl: false
+    bucket_name: "biarbala"
 
 cache:
   redis:
@@ -26,7 +41,7 @@ cache:
 
 logging:
   level: "info"
-  format: "json"
+  format: "text"
   output: "stdout"
 
 metrics:
@@ -44,6 +59,36 @@ security:
   rate_limit:
     enabled: true
     requests_per_minute: 60
+
+auth:
+  keycloak:
+    enabled: true
+    server_url: "http://localhost:8082"
+    realm: "biarbala"
+    client_id: "biarbala-client"
+    client_secret: "biarbala-secret"
+    admin_username: "admin"
+    admin_password: "admin123"
+    redirect_url: "http://localhost:8081/auth/callback"
+    logout_url: "http://localhost:8081/auth/logout"
+    database: "dev-file"  # Options: dev-file, dev-mem, postgres
+    db_url: "jdbc:postgresql://localhost:5432/keycloak"
+  jwt:
+    secret_key: "biarbala-jwt-secret-key-change-in-production"
+    expiration: "24h"
+    refresh_expiration: "168h"
+  # GitHub and Google OAuth are now configured in Keycloak as identity providers
+
+email:
+  enabled: false
+  smtp_host: "localhost"
+  smtp_port: 587
+  smtp_username: ""
+  smtp_password: ""
+  use_tls: true
+  from_email: "noreply@biarbala.ir"
+  from_name: "Biarbala"
+  base_url: "http://localhost:8081"
 
 domain:
   main_domain: "biarbala.ir"

@@ -10,9 +10,27 @@ Biarbala is a web server as a service platform similar to Netlify, Surge, and Ve
 - **Static File Serving**: Serve uploaded static files as web pages
 - **Standard Web Files Support**: Support for index.html, 404.html, {error_code}.html, public/, .well-known, robots.txt
 - **Project-Based Access**: No account required for public users - return project ID and password on upload
-- **User Account Support**: Optional user accounts for enhanced features
+- **User Account Support**: Full user account system with authentication and authorization
 - **Usage Monitoring**: Monitor usage and provide metrics to users
 - **Billing Preparation**: Codebase must be extensible for future billing implementation with exact usage monitoring
+
+### Authentication & Authorization Requirements
+- **Identity Provider**: Keycloak for centralized user management and authentication
+- **Social Login Support**: 
+  - GitHub OAuth integration
+  - Google OAuth integration
+- **Email Authentication**: 
+  - Email + password registration/login
+  - Email OTP (One-Time Password) verification
+  - Email verification for account activation
+- **User Types**: 
+  - Public users (no account required)
+  - Registered users (authenticated users)
+  - Admin users (administrative privileges)
+- **Access Control**: 
+  - Public endpoints (no authentication required)
+  - User endpoints (authenticated users only)
+  - Admin endpoints (admin users only)
 
 ### Domain Management Requirements
 - **Main Domain**: `biarbala.ir` as the primary domain
@@ -77,7 +95,21 @@ Biarbala is a web server as a service platform similar to Netlify, Surge, and Ve
 - [x] Domain routing and traffic management - Implemented in pkg/web/
 - [x] Domain change functionality - Implemented in pkg/server/biarbala_service.go
 
-### Phase 4: Production Readiness
+### Phase 5: Authentication & Authorization ✅
+- [x] Keycloak integration and configuration
+- [x] Email service implementation
+- [x] User management system
+- [x] Authentication middleware
+- [x] Authorization and access control
+- [x] GitHub OAuth integration
+- [x] Google OAuth integration
+- [x] Email verification and OTP system
+- [x] Admin user management
+- [x] Keycloak database configuration fixed (PostgreSQL support)
+- [x] User admin gRPC service implementation
+- [x] OAuth provider integration centralized through Keycloak
+
+### Phase 6: Production Readiness
 - [ ] Testing implementation
 - [ ] Performance optimization
 - [ ] Security hardening
@@ -90,9 +122,15 @@ Biarbala is a web server as a service platform similar to Netlify, Surge, and Ve
 - **Logging**: Logrus
 - **Metrics**: Prometheus
 - **Frontend**: HTMX only
-- **Database**: MongoDB (no ORM)
+- **Database**: MongoDB (no ORM), PostgreSQL (for Keycloak)
+- **Object Storage**: MinIO (S3-compatible)
 - **Cache**: Redis
 - **API**: gRPC with protobuf
+- **Authentication**: Keycloak, JWT tokens
+- **Email**: SMTP client for email notifications and verification
+- **OAuth**: GitHub and Google OAuth via Keycloak identity providers
+- **User Management**: Keycloak-based user system with role-based access control
+- **Admin Services**: gRPC-based user administration API
 
 ### Project Structure
 ```
@@ -114,79 +152,89 @@ biarbala/
 
 #### 1. File Upload Service (`pkg/upload/upload.go`)
 - Supports tar, gzip, and zip file formats
-- Extracts files to project-specific directories
+- Extracts files to memory and uploads to object storage
 - Validates extracted files for security
 - Generates unique project IDs and access passwords
 - Records upload metrics
+- Uses MinIO for S3-compatible object storage
 
 #### 2. Static File Serving (`pkg/web/web.go`)
-- Serves static files from project directories
+- Serves static files from object storage
 - Handles index.html, 404.html, and error pages
 - Supports standard web files (public/, .well-known, robots.txt)
 - Implements proper caching headers
 - Records access metrics for billing preparation
+- Uses MinIO for file retrieval
 
-#### 3. Project Management (`pkg/storage/mongodb.go`)
+#### 3. Project Management (`pkg/database/mongodb.go`)
 - MongoDB-based storage without ORM
 - Project CRUD operations
 - Metrics tracking and storage
 - Access control with project passwords
 - Pagination support for project listing
+- User management with role-based access control
 
-#### 4. gRPC Service (`pkg/server/biarbala_service.go`)
+#### 4. Object Storage (`pkg/storage/minio.go`)
+- MinIO-based S3-compatible object storage
+- Project file upload and retrieval
+- Content type detection
+- File streaming support
+- Bucket management and health checks
+
+#### 5. gRPC Service (`pkg/server/biarbala_service.go`)
 - Complete BiarbalaService implementation
 - Upload, get, update, delete, list operations
 - Project metrics retrieval
 - Health check endpoint
 - Proper error handling and validation
 
-#### 5. Configuration Management (`pkg/config/config.go`)
+#### 6. Configuration Management (`pkg/config/config.go`)
 - Viper-based configuration
 - Environment variable support
 - Default values for all settings
 - Structured configuration types
 
-#### 6. Logging (`pkg/logger/logger.go`)
+#### 7. Logging (`pkg/logger/logger.go`)
 - Logrus-based structured logging
 - Configurable log levels and formats
 - Request ID tracking
 - Error context preservation
 
-#### 7. Metrics (`pkg/metrics/metrics.go`)
+#### 8. Metrics (`pkg/metrics/metrics.go`)
 - Prometheus metrics collection
 - HTTP, gRPC, file upload, and project metrics
 - Cache hit/miss tracking
 - Database and Redis connection monitoring
 - Built-in HTTP server for metrics endpoint
 
-#### 8. Frontend (`frontend/index.html`)
+#### 9. Frontend (`frontend/index.html`)
 - HTMX-based single-page application
 - Drag-and-drop file upload
 - Real-time upload progress
 - Responsive design
 - Auto-format detection
 
-#### 9. Domain Management (`pkg/domain/`)
+#### 10. Domain Management (`pkg/domain/`)
 - Subdomain validation with Biarbala rules
 - Custom domain validation
 - Meaningful subdomain generation
 - Domain verification with TXT challenges
 - DNS lookup and verification
 
-#### 10. SSL Certificate Management (`pkg/ssl/`)
+#### 11. SSL Certificate Management (`pkg/ssl/`)
 - Let's Encrypt provider implementation
 - Certificate request, renewal, and revocation
 - Self-signed certificates for development
 - Certificate validation and expiry checking
 - TLS configuration management
 
-#### 11. Domain Routing (`pkg/web/web.go`)
+#### 12. Domain Routing (`pkg/web/web.go`)
 - Domain-based project serving
 - Custom domain verification checks
 - SSL certificate validation
 - Domain-specific error handling
 
-#### 12. Web-gRPC Support (`pkg/server/server.go`)
+#### 13. Web-gRPC Support (`pkg/server/server.go`)
 - HTTP-to-gRPC bridge implementation
 - RESTful API endpoints for web clients
 - Multipart file upload support
@@ -199,6 +247,81 @@ biarbala/
   - `DELETE /api/v1/projects/{id}` - Delete project
   - `GET /api/v1/health` - Health check
 
+#### 14. Authentication System (`pkg/auth/`)
+- JWT token generation, validation, and refresh
+- Keycloak OAuth2/OpenID Connect integration
+- GitHub and Google OAuth via Keycloak identity providers
+- Authentication middleware with role-based access control
+- Identity service for unified authentication management
+- OAuth state validation for CSRF protection
+- Centralized OAuth provider management through Keycloak
+
+#### 15. User Management (`pkg/users/user.go`)
+- Comprehensive user data model with Keycloak integration
+- User types: Public, User, Admin with role-based access
+- User status management: Pending, Active, Suspended, Deleted
+- Email verification with expiration codes (stored as user attributes)
+- OTP (One-Time Password) management for various purposes (stored as user attributes)
+- Password reset functionality with secure tokens (stored as user attributes)
+- Keycloak Admin API integration for user operations
+- Automatic token management for Keycloak admin authentication
+
+#### 16. Email Service (`pkg/email/smtp.go`)
+- SMTP client with TLS support
+- Email templates for verification and OTP
+- Configurable SMTP settings
+- HTML and plain text email support
+- Error handling and logging
+
+#### 17. Authentication API Endpoints
+- `POST /api/v1/auth/login` - User login with email/password
+- `POST /api/v1/auth/register` - User registration
+- `POST /api/v1/auth/logout` - User logout
+- `POST /api/v1/auth/refresh` - Token refresh
+- `GET /api/v1/auth/profile` - Get user profile
+- `GET /api/v1/auth/keycloak` - Keycloak OAuth initiation
+- `GET /api/v1/auth/keycloak/callback` - Keycloak OAuth callback
+- `GET /api/v1/auth/github` - GitHub OAuth initiation
+- `GET /api/v1/auth/github/callback` - GitHub OAuth callback
+- `GET /api/v1/auth/google` - Google OAuth initiation
+- `GET /api/v1/auth/google/callback` - Google OAuth callback
+- `POST /api/v1/auth/otp/send` - Send OTP
+- `POST /api/v1/auth/otp/verify` - Verify OTP
+- `GET /api/v1/auth/verify-email` - Email verification
+- `POST /api/v1/auth/reset-password` - Password reset request
+- `POST /api/v1/auth/reset-password/confirm` - Password reset confirmation
+
+#### 18. User Admin Service (`pkg/server/user_admin_service.go`)
+- Comprehensive user management via gRPC API
+- Create, read, update, delete user operations
+- User listing with pagination and filtering
+- Password management (change/reset)
+- User status management (active, suspended, deleted)
+- Role assignment and removal
+- Admin-only access control
+- Integration with user service and authentication system
+
+#### 19. User Admin gRPC API Endpoints
+- `CreateUser` - Create new user (admin only)
+- `GetUser` - Get user information
+- `UpdateUser` - Update user details
+- `DeleteUser` - Soft delete user
+- `ListUsers` - List users with pagination
+- `ChangeUserPassword` - Change user password
+- `ResetUserPassword` - Reset user password
+- `UpdateUserStatus` - Update user status
+- `AssignUserRoles` - Assign roles to user
+- `RemoveUserRoles` - Remove roles from user
+
+#### 20. Keycloak OAuth Integration
+- **Centralized OAuth Management**: All OAuth providers (GitHub, Google) are configured in Keycloak as identity providers
+- **Unified Authentication Flow**: Users authenticate through Keycloak, which handles the OAuth flow with external providers
+- **Provider Configuration**: GitHub and Google OAuth credentials are configured in Keycloak admin console
+- **User Information**: All user data comes from Keycloak's userinfo endpoint, regardless of the original OAuth provider
+- **Token Management**: Keycloak issues JWT tokens that can be validated by the backend
+- **Identity Provider Hints**: Backend uses `kc_idp_hint` parameter to direct users to specific OAuth providers
+- **Callback Handling**: All OAuth callbacks are handled through Keycloak's unified callback endpoint
+
 ### Infrastructure Components
 
 #### Docker Configuration
@@ -210,6 +333,9 @@ biarbala/
 #### Docker Compose
 - Complete development environment
 - MongoDB and Redis services
+- MinIO object storage service
+- PostgreSQL database for Keycloak
+- Keycloak authentication service (fixed database configuration)
 - Nginx reverse proxy
 - Volume persistence
 - Network isolation
@@ -231,6 +357,9 @@ biarbala/
 - **2025-09-24**: Complete implementation of all core features
 - **2025-09-24**: Infrastructure setup with Docker and Kubernetes
 - **2025-09-24**: Frontend implementation with HTMX
+- **2025-09-26**: Added MinIO object storage support
+- **2025-09-26**: Refactored storage package to database package
+- **2025-09-26**: Updated file serving to use object storage instead of local files
 
 ## Notes
 - This file serves as the single source of truth for project requirements
