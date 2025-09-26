@@ -2,10 +2,8 @@ package domain
 
 import (
 	"fmt"
-	"math/rand"
 	"regexp"
 	"strings"
-	"time"
 
 	petname "github.com/dustinkirkland/golang-petname"
 )
@@ -64,17 +62,6 @@ func (v *SubdomainValidator) ValidateCustomDomain(domain string) error {
 		return fmt.Errorf("domain cannot be empty")
 	}
 
-	// Basic domain validation regex
-	domainRegex := regexp.MustCompile(`^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$`)
-	if !domainRegex.MatchString(domain) {
-		return fmt.Errorf("invalid domain format")
-	}
-
-	// Check minimum length
-	if len(domain) < 3 {
-		return fmt.Errorf("domain must be at least 3 characters long")
-	}
-
 	// Check that it's not our main domain
 	if domain == MainDomain {
 		return fmt.Errorf("cannot use main domain as custom domain")
@@ -90,16 +77,11 @@ func (v *SubdomainValidator) ValidateCustomDomain(domain string) error {
 
 // GenerateSubdomain generates a meaningful subdomain name using petname library
 func (v *SubdomainValidator) GenerateSubdomain() string {
-	// Initialize random seed
-	rand.Seed(time.Now().UnixNano())
-
 	// Generate a three-part pet name in format: adverb-adjective-animal
 	// Using petname library with 3 words and dash separator
-	petName := petname.Generate(3, "-")
-
 	// Ensure the generated name meets our minimum length requirement
-	if len(petName) < MinLength {
-		// If too short, generate another one
+	petName := ""
+	for len(petName) < MinLength {
 		petName = petname.Generate(3, "-")
 	}
 

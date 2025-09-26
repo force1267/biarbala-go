@@ -241,6 +241,13 @@
             <p>Simple static hosting for your projects</p>
         </div>
 
+        <!-- Auth controls -->
+        <div class="header-auth" style="text-align:center; color:white; margin-bottom:16px;">
+            <div id="auth-area">
+                <button id="login-btn" class="upload-btn" style="max-width:240px; display:inline-block;">Login</button>
+            </div>
+        </div>
+
         <div class="main-content">
             <div class="upload-section">
                 <h2>Upload Your Project</h2>
@@ -411,6 +418,72 @@
         document.body.addEventListener('htmx:beforeRequest', function(event) {
             const loading = document.getElementById('loading');
             loading.style.display = 'block';
+        });
+
+        // Authentication helpers
+        function loginWithProvider(provider) {
+            switch (provider) {
+                case 'github':
+                    window.location.href = '/api/v1/auth/github';
+                    break;
+                case 'google':
+                    window.location.href = '/api/v1/auth/google';
+                    break;
+                case 'keycloak':
+                default:
+                    window.location.href = '/api/v1/auth/keycloak';
+                    break;
+            }
+        }
+
+        function logout() {
+            fetch('/api/v1/auth/logout', { method: 'POST' })
+                .then(() => { window.location.reload(); })
+                .catch(() => { window.location.reload(); });
+        }
+
+        function showAuthButtons() {
+            const authArea = document.getElementById('auth-area');
+            authArea.innerHTML = `
+                <div style="display:inline-block; gap:8px">
+                    <button onclick="loginWithProvider('keycloak')" class="upload-btn" style="max-width:180px; margin-right:8px;">Login with Keycloak</button>
+                    <button onclick="loginWithProvider('github')" class="upload-btn" style="max-width:180px; margin-right:8px;">Login with GitHub</button>
+                    <button onclick="loginWithProvider('google')" class="upload-btn" style="max-width:180px;">Login with Google</button>
+                </div>
+            `;
+        }
+
+        function showUserProfile(user) {
+            const authArea = document.getElementById('auth-area');
+            const avatar = user.avatarUrl ? `<img src="${user.avatarUrl}" alt="avatar" style="height:32px;width:32px;border-radius:50%;margin-right:8px;vertical-align:middle">` : '';
+            authArea.innerHTML = `
+                <div style="display:inline-block; vertical-align:middle; color:white;">
+                    ${avatar}<span style="font-weight:600; margin-right:12px;">${user.email || user.username}</span>
+                    <button onclick="logout()" style="background:#fff;color:#333;border-radius:6px;padding:8px 12px;font-weight:600;">Logout</button>
+                </div>
+            `;
+        }
+
+        function fetchProfile() {
+            fetch('/api/v1/auth/profile', { credentials: 'include' })
+                .then(resp => {
+                    if (resp.status === 200) return resp.json();
+                    throw new Error('not authenticated');
+                })
+                .then(data => {
+                    showUserProfile({ email: data.email, username: data.username, avatarUrl: data.avatar_url || data.avatarUrl });
+                })
+                .catch(() => {
+                    showAuthButtons();
+                });
+        }
+
+        // Initialize auth UI
+        document.addEventListener('DOMContentLoaded', function() {
+            // primary login button fallback
+            const loginBtn = document.getElementById('login-btn');
+            if (loginBtn) loginBtn.addEventListener('click', function() { showAuthButtons(); });
+            fetchProfile();
         });
     </script>
 </body>

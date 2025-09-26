@@ -322,7 +322,7 @@ func (s *BiarbalaServiceImpl) SetProjectDomain(ctx context.Context, req *protos.
 		return nil, status.Error(codes.InvalidArgument, "domain is required")
 	}
 
-	// Get project from storage
+	// Get project from database
 	project, err := s.database.GetProject(ctx, req.ProjectId)
 	if err != nil {
 		s.logger.WithError(err).WithField("project_id", req.ProjectId).Error("Failed to get project")
